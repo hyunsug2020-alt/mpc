@@ -2,6 +2,8 @@
 #define HV_HANDLER__HV_BASE_HPP_
 
 #include <fstream>
+#include <iomanip>
+#include <sstream>
 
 #include <rclcpp/rclcpp.hpp>
 #include <nlohmann/json.hpp>
@@ -62,8 +64,10 @@ public:
             path.Y[v.start_index + 1] - path.Y[v.start_index],
             path.X[v.start_index + 1] - path.X[v.start_index]);
 
+        std::ostringstream id_ss;
+        id_ss << std::setw(2) << std::setfill('0') << id;
         v.pub = node_->create_publisher<geometry_msgs::msg::PoseStamped>(
-            "/" + v.name, 10);
+            "/sim/hv" + id_ss.str() + "/pose", 10);
 
         // RCLCPP_INFO(node_->get_logger(),
         //     "Init %s at (x=%.3f,y=%.3f,yaw=%.2fdeg)",

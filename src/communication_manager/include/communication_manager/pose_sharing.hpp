@@ -14,8 +14,9 @@ public:
   PoseSharing(const rclcpp::Node::SharedPtr& node){
       node_ = node;
 
+      // Fast bridge spin to reduce cross-domain delivery latency/jitter.
       timer_ = node_->create_wall_timer(
-            std::chrono::milliseconds(25),
+            std::chrono::milliseconds(10),
             std::bind(&PoseSharing::spin_executor, this)
         );
   }

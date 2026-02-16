@@ -24,6 +24,7 @@ find_package(osqp REQUIRED)
 # 메시지 생성
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/LapInfo.msg"
+  "msg/MPCPerformance.msg"
   DEPENDENCIES std_msgs
 )
 
@@ -53,6 +54,30 @@ target_link_libraries(mpc_controller_cpp
 )
 
 # ================================================================
+# ltv_mpc_core (라이브러리)
+# ================================================================
+add_library(ltv_mpc_core SHARED
+  src/ltv_mpc/ltv_model.cpp
+  src/ltv_mpc/ltv_cost.cpp
+  src/ltv_mpc/ltv_solver.cpp
+  src/ltv_mpc/ltv_mpc.cpp
+)
+ament_target_dependencies(ltv_mpc_core
+  rclcpp geometry_msgs nav_msgs
+)
+target_include_directories(ltv_mpc_core PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+  $<INSTALL_INTERFACE:include>
+  ${EIGEN3_INCLUDE_DIRS}
+  /usr/include/eigen3
+)
+target_link_libraries(ltv_mpc_core
+  Eigen3::Eigen
+  osqp::osqp
+)
+
+# ================================================================
 # mpc_path_tracker_cpp (실행 파일)
 # ================================================================
 add_executable(mpc_path_tracker_cpp
@@ -61,9 +86,13 @@ add_executable(mpc_path_tracker_cpp
 ament_target_dependencies(mpc_path_tracker_cpp
   rclcpp std_msgs geometry_msgs nav_msgs
 )
-target_link_libraries(mpc_path_tracker_cpp mpc_controller_cpp)
+target_link_libraries(mpc_path_tracker_cpp
+  ltv_mpc_core
+  mpc_controller_cpp
+)
 target_include_directories(mpc_path_tracker_cpp PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
   $<INSTALL_INTERFACE:include>
   /usr/include/eigen3
 )
@@ -78,6 +107,20 @@ ament_target_dependencies(local_path_pub_cpp
   rclcpp std_msgs geometry_msgs nav_msgs visualization_msgs tf2 tf2_geometry_msgs
 )
 target_include_directories(local_path_pub_cpp PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+
+# ================================================================
+# priority_collision_gate (실행 파일)
+# ================================================================
+add_executable(priority_collision_gate
+  src/priority_collision_gate.cpp
+)
+ament_target_dependencies(priority_collision_gate
+  rclcpp geometry_msgs
+)
+target_include_directories(priority_collision_gate PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
 )
@@ -146,6 +189,8 @@ install(PROGRAMS
   scripts/dijkstra_planner.py
   scripts/mgeo_class_defs.py
   scripts/hdmap_generator.py
+  scripts/mpc_dashboard.py
+  scripts/analyze_mpc_performance.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -153,6 +198,7 @@ install(PROGRAMS
 install(TARGETS
   local_path_pub_cpp
   mpc_path_tracker_cpp
+  priority_collision_gate
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -167,6 +213,7 @@ endif()
 # C++ 라이브러리 설치
 install(TARGETS
   mpc_controller_cpp
+  ltv_mpc_core
   EXPORT mpc_controller_cpp
   LIBRARY DESTINATION lib
   ARCHIVE DESTINATION lib

@@ -6,17 +6,20 @@ def generate_launch_description():
 
     communication_manager = ExecuteProcess(
         cmd=['ros2', 'run', 'communication_manager', 'pose_sharing_handler'],
-        output='screen'
+        output='screen',
+        additional_env={'ROS_DOMAIN_ID': '100'}
     )
 
     hv_path_follower = ExecuteProcess(
         cmd=['ros2', 'run', 'hv_handler', 'hv_handler_node'],
-        output='screen'
+        output='screen',
+        additional_env={'ROS_DOMAIN_ID': '100'}
     )
 
     simulator = ExecuteProcess(
         cmd=['ros2', 'run', 'simulator', 'simulation_node'],
-        output='screen'
+        output='screen',
+        additional_env={'ROS_DOMAIN_ID': '100'}
     )
 
     order_two = RegisterEventHandler(

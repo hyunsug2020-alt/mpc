@@ -112,6 +112,9 @@ namespace CollisionSystem {
             auto vehicles = ecs.write<Physics, ROSTopic>();
             vehicles.iterate([&](EntityID id, Physics &physics, ROSTopic &topic) {
                 physics.on = false;
+                std::cout << "[DBG][COLLISION] physics.off set by collision, id=" << id
+                          << ", pub_topic=" << topic.publisher
+                          << ", sub_topic=" << topic.subscriber << "\n";
             });
         }
     };

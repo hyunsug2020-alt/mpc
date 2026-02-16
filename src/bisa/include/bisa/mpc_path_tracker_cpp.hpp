@@ -5,7 +5,9 @@
 #include <nav_msgs/msg/path.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/accel.hpp>
+#include "bisa/msg/mpc_performance.hpp"
 #include "bisa/mpc_controller_cpp.hpp"
+#include "ltv_mpc/ltv_mpc.hpp"
 #include <memory>
 #include <optional>
 
@@ -27,14 +29,15 @@ private:
     void control_loop();
     void publish_control(double v, double w);
     void publish_predicted_path(const std::vector<std::array<double, 3>>& traj);
+    void publish_performance(double model_time_us, double solver_time_us,
+                             double total_time_us, int solver_iterations,
+                             const std::string& solver_status);
     void update_controller_params();
     rcl_interfaces::msg::SetParametersResult parameter_callback(
         const std::vector<rclcpp::Parameter>& params);
     
-    // 충돌 회피 제약조건 계산 (다른 차량 고려)
-    CollisionConstraints compute_collision_constraints();
-    
-    std::unique_ptr<MPCControllerCpp> controller_;
+    std::unique_ptr<LTVMPC> ltv_controller_;
+    std::unique_ptr<MPCControllerCpp> legacy_controller_;
     std::vector<geometry_msgs::msg::PoseStamped> local_path_;
     std::optional<geometry_msgs::msg::Pose> current_pose_;
     
@@ -43,13 +46,23 @@ private:
     rclcpp::Publisher<geometry_msgs::msg::Accel>::SharedPtr accel_pub_;
     rclcpp::Publisher<geometry_msgs::msg::Accel>::SharedPtr accel_pub_raw_;
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pred_pub_;
+    rclcpp::Publisher<bisa::msg::MPCPerformance>::SharedPtr perf_pub_;
     rclcpp::TimerBase::SharedPtr timer_;
     
     rclcpp::Time last_log_time_;
     OnSetParametersCallbackHandle::SharedPtr param_callback_handle_;
+
+    double max_omega_abs_ = 1.2;
+    double max_omega_rate_ = 6.0;
+    double max_v_rate_ = 3.0;
+    double prev_v_cmd_ = 0.0;
+    double prev_w_cmd_ = 0.0;
+    rclcpp::Time prev_cmd_time_;
+    bool cmd_initialized_ = false;
     
     // CAV ID
     int target_cav_id_;
+    bool use_ltv_mpc_{true};
 };
 
 }

@@ -1,6 +1,7 @@
 #include "bisa/local_path_pub_cpp.hpp"
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+#include <algorithm>
 #include <cmath>
 
 namespace bisa
@@ -24,6 +25,16 @@ namespace bisa
         // ★ [추가] RViz 슬롯 파라미터
         this->declare_parameter("rviz_slot", -1);
         rviz_slot_ = this->get_parameter("rviz_slot").as_int();
+        this->declare_parameter("local_path_size", 220);
+        this->declare_parameter("search_window", 200);
+        this->declare_parameter("max_index_step", 20);
+        this->declare_parameter("reinit_distance_threshold", 2.0);
+        this->declare_parameter("smooth_window", 2);
+        local_path_size_ = static_cast<size_t>(std::max<int64_t>(20, this->get_parameter("local_path_size").as_int()));
+        search_window = static_cast<int>(std::max<int64_t>(10, this->get_parameter("search_window").as_int()));
+        max_index_step_ = static_cast<size_t>(std::max<int64_t>(1, this->get_parameter("max_index_step").as_int()));
+        reinit_distance_threshold_ = std::max(0.5, this->get_parameter("reinit_distance_threshold").as_double());
+        smooth_window_ = static_cast<int>(std::max<int64_t>(0, this->get_parameter("smooth_window").as_int()));
 
         // RCLCPP_INFO(this->get_logger(), "Local Path Pub for CAV_%s (RViz Slot: %d)", id_str.c_str(), rviz_slot_);
 
@@ -59,9 +70,9 @@ namespace bisa
             // RCLCPP_INFO(this->get_logger(), "RViz topics: %s, %s", rviz_local_topic.c_str(), rviz_marker_topic.c_str());
         }
 
-        // 1kHz timer
+        // Local path publish rate: 20Hz (aligned with MPC Ts=0.05s)
         timer_ = this->create_wall_timer(
-            std::chrono::microseconds(25),
+            std::chrono::milliseconds(50),
             std::bind(&LocalPathPubCpp::publish_local_path, this));
 
         // RCLCPP_INFO(this->get_logger(), "Ready!");
@@ -144,6 +155,7 @@ namespace bisa
 
         double x = current_pose_->position.x;
         double y = current_pose_->position.y;
+        double current_yaw = current_pose_->orientation.z;
 
         // Find closest waypoint
         double min_d = 1e9;
@@ -169,6 +181,11 @@ namespace bisa
 
                 double dx = global_path_->poses[idx].pose.position.x - x;
                 double dy = global_path_->poses[idx].pose.position.y - y;
+
+                double dot = dx * std::cos(current_yaw) + dy * std::sin(current_yaw);
+                if (dot < -0.5)
+                    continue;
+
                 double d = std::sqrt(dx * dx + dy * dy);
 
                 if (d < min_d)
@@ -182,7 +199,7 @@ namespace bisa
         // 2. [핵심] "차를 들어서 옮긴 경우" 감지 (Global Re-initialization)
         // Window 탐색 결과 가장 가까운 점이 2.0m 이상 떨어져 있다면,
         // 차를 멀리 옮겼다고 판단하고 전체 경로에서 다시 찾습니다.
-        if (need_global_search || min_d > 2.0)
+        if (need_global_search || min_d > reinit_distance_threshold_)
         {
             min_d = 1e9; // 거리 초기화
             for (size_t i = 0; i < total; ++i)
@@ -200,6 +217,24 @@ namespace bisa
             // 전역 탐색을 수행했다면 초기화 완료 처리
             is_initialized_ = true;
             // RCLCPP_WARN(this->get_logger(), "Relocated! Reset path index to %zu", closest);
+        }
+
+        // 인덱스 점프 억제: 뒤로 튀는 경우를 막고, 과도한 전방 점프를 제한
+        if (is_initialized_ && total > 0)
+        {
+            const size_t prev = current_waypoint_;
+            const size_t forward_delta = (closest + total - prev) % total;
+            const size_t backward_delta = (prev + total - closest) % total;
+            const bool lap_wrap = (prev > (total * 9) / 10) && (closest < total / 10);
+
+            if (!lap_wrap && backward_delta < forward_delta)
+            {
+                closest = prev;
+            }
+            else if (forward_delta > max_index_step_ && min_d < reinit_distance_threshold_)
+            {
+                closest = (prev + max_index_step_) % total;
+            }
         }
 
         // ==========================================
@@ -250,10 +285,47 @@ namespace bisa
         local.header.frame_id = "world";
         local.header.stamp = this->now();
 
+        std::vector<geometry_msgs::msg::PoseStamped> raw_points;
+        raw_points.reserve(local_path_size_);
         for (size_t i = 0; i < local_path_size_; ++i)
         {
             size_t idx = (current_waypoint_ + i) % total; // 순환!
-            local.poses.push_back(global_path_->poses[idx]);
+            raw_points.push_back(global_path_->poses[idx]);
+        }
+
+        // 코너 불연속 완화를 위한 이동 평균 스무딩
+        for (size_t i = 0; i < raw_points.size(); ++i)
+        {
+            geometry_msgs::msg::PoseStamped pose = raw_points[i];
+            if (smooth_window_ > 0)
+            {
+                double sx = 0.0;
+                double sy = 0.0;
+                int cnt = 0;
+                const int i0 = std::max(0, static_cast<int>(i) - smooth_window_);
+                const int i1 = std::min(static_cast<int>(raw_points.size()) - 1,
+                                        static_cast<int>(i) + smooth_window_);
+                for (int j = i0; j <= i1; ++j)
+                {
+                    sx += raw_points[static_cast<size_t>(j)].pose.position.x;
+                    sy += raw_points[static_cast<size_t>(j)].pose.position.y;
+                    ++cnt;
+                }
+                if (cnt > 0)
+                {
+                    pose.pose.position.x = sx / static_cast<double>(cnt);
+                    pose.pose.position.y = sy / static_cast<double>(cnt);
+                }
+            }
+
+            const size_t next = std::min(i + 1, raw_points.size() - 1);
+            const double dx = raw_points[next].pose.position.x - raw_points[i].pose.position.x;
+            const double dy = raw_points[next].pose.position.y - raw_points[i].pose.position.y;
+            const double yaw = std::atan2(dy, dx);
+            tf2::Quaternion q;
+            q.setRPY(0.0, 0.0, yaw);
+            pose.pose.orientation = tf2::toMsg(q);
+            local.poses.push_back(pose);
         }
 
         local_pub_->publish(local);

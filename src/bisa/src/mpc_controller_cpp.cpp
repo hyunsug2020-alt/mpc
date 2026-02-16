@@ -362,13 +362,22 @@ Eigen::VectorXd MPCControllerCpp::compute_state_vector(
     double y_ref = reference_path[closest_idx].pose.position.y;
     double theta_ref = 0.0;
     {
-        int idx0 = std::max(0, std::min(closest_idx, (int)reference_path.size()-1));
-        int idx1 = std::min(idx0 + 1, (int)reference_path.size()-1);
-        if (idx1 == idx0 && idx0 > 0) idx1 = idx0 - 1;
+        const int n = static_cast<int>(reference_path.size());
+        int idx0 = std::max(0, std::min(closest_idx, n - 1));
+
+        // Prefer path quaternion yaw (already generated in global_path_pub_multi.py).
+        theta_ref = quaternion_to_yaw(reference_path[idx0].pose.orientation);
+
+        // Fallback to geometric tangent when quaternion is unavailable/degenerate.
+        int idx1 = (idx0 + 1) % n;
         const double dxr = reference_path[idx1].pose.position.x - reference_path[idx0].pose.position.x;
         const double dyr = reference_path[idx1].pose.position.y - reference_path[idx0].pose.position.y;
-        if (std::abs(dxr) + std::abs(dyr) < 1e-9) theta_ref = 0.0;
-        else theta_ref = std::atan2(dyr, dxr);
+        if (std::hypot(dxr, dyr) > 1e-6) {
+            const double tangent_yaw = std::atan2(dyr, dxr);
+            // Blend to avoid abrupt heading flips from noisy orientation messages.
+            theta_ref = 0.7 * theta_ref + 0.3 * tangent_yaw;
+        }
+
         while (theta_ref > M_PI) theta_ref -= 2.0 * M_PI;
         while (theta_ref < -M_PI) theta_ref += 2.0 * M_PI;
     }
@@ -506,6 +515,11 @@ void MPCControllerCpp::compute_curvature_limits(
     
     kappa_max = params_.kappa_max_delta;
     kappa_min = params_.kappa_min_delta;
+
+    // No tire friction model in this simulator. If mu<=0, skip Kamm's-circle limiting.
+    if (params_.mu <= 0.0) {
+        return;
+    }
     
     if (v > 0.1) {
         // Kamm's circle 마찰 제약
@@ -596,6 +610,17 @@ bool MPCControllerCpp::formulate_qp(
     
     // f = B^T * C^T * Q * C * (A*x0 + E*z)
     Eigen::VectorXd f = B_full.transpose() * Q_bar * y_pred;
+
+    // Add heading-error state penalty directly in state space.
+    // This supplements output-space cost, which only penalizes lateral offsets and curvature.
+    if (params_.wtheta > 0.0) {
+        Eigen::MatrixXd Qx_heading = Eigen::MatrixXd::Zero(5 * N, 5 * N);
+        for (int k = 0; k < N; ++k) {
+            Qx_heading(k * 5 + 1, k * 5 + 1) = params_.wtheta;  // dtheta state index
+        }
+        H_dense += B_bar.transpose() * Qx_heading * B_bar;
+        f += B_bar.transpose() * Qx_heading * x_pred;
+    }
     
     // OSQP는 0.5*x^T*P*x + q^T*x 형태를 기대
     // 우리: x^T*H*x + 2*f^T*x

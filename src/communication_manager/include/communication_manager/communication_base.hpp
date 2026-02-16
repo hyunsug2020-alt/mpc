@@ -4,12 +4,16 @@
 #include <chrono>
 #include <iomanip>
 #include <sstream>
-#include <utility> 
+#include <utility>
+#include <array>
 
 #include <rclcpp/rclcpp.hpp>
 #include <domain_bridge/domain_bridge.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/accel.hpp>
+#include <nav_msgs/msg/path.hpp>
+#include <visualization_msgs/msg/marker.hpp>
+#include <visualization_msgs/msg/marker_array.hpp>
 
 using namespace std::chrono_literals;
 using real = double;
@@ -23,131 +27,126 @@ public:
     virtual void deactivate() = 0;
     bool is_active() const { return active_; }
 
-    struct TopicInfo
-    {
-        std::string name;
-        int id;
-        bool is_cav;
-    };
-    
-    TopicInfo create_topic_info(const std::string &topic_name, bool is_cav)
-    {
-        TopicInfo info;
-        info.name = topic_name;
-        info.is_cav = is_cav;
-        if (is_cav) {
-            info.id = std::stoi(topic_name.substr(5, 2));
-        } else {
-            info.id = std::stoi(topic_name.substr(4, 2));
-        }
-        return info;
-    }
-
     void vec_topics_init()
     {
-        RCLCPP_INFO(node_->get_logger(), "Wait for 1s...");
+        RCLCPP_INFO(node_->get_logger(), "Preparing explicit SIM<->CAV/HV bridges...");
         rclcpp::sleep_for(std::chrono::seconds(1));
-
-        vec_topics.clear();
-
-        int CAV_N = 0;
-        int HV_N = 0;
-
-        auto topics = node_->get_topic_names_and_types();
-        for (auto it = topics.begin(); it != topics.end(); ) 
-        {
-            const std::string& topic_name = it->first;
-            const std::vector<std::string> &topic_types = it->second;
-
-            if (topic_name.find("/CAV_", 0) == 0 && 
-                topic_name.size() == 7 && 
-                topic_types[0] == "geometry_msgs/msg/PoseStamped") 
-            {
-            vec_topics.push_back(create_topic_info(topic_name, true));
-            ++it;
-            CAV_N++;
-            continue;
-            }
-            if (topic_name.find("/HV", 0) == 0 && 
-                topic_name.size() == 6 && 
-                topic_types[0] == "geometry_msgs/msg/PoseStamped") 
-            {
-            vec_topics.push_back(create_topic_info(topic_name, false));
-            ++it;
-            HV_N++;
-            continue;
-            }
-            ++it;
-        }
-
-        // RCLCPP_INFO(node_->get_logger(), "Subscribe %d CAVs' Topic and %d HVs' Topic!!", CAV_N, HV_N);
     }
 
     void pose_communication()
     {
-        for (const auto &topic_info : vec_topics)
-        {
-            if (topic_info.is_cav)
-            {
-                std::ostringstream node_name_ss;
-                node_name_ss << "f100t" << std::setw(2) << std::setfill('0') << topic_info.id;
+        const std::array<int, 4> cav_ids{{1, 2, 3, 4}};
+        const std::array<int, 2> hv_ids{{19, 20}};
 
-                domain_bridge::DomainBridgeOptions bridge_opts;
-                bridge_opts.name(node_name_ss.str());
+        for (int cav_id : cav_ids) {
+            std::ostringstream id_ss;
+            id_ss << std::setw(2) << std::setfill('0') << cav_id;
+            const std::string id = id_ss.str();
 
-                auto db_node = std::make_shared<domain_bridge::DomainBridge>(bridge_opts);
+            domain_bridge::DomainBridgeOptions bridge_opts;
+            bridge_opts.name("sim_cav_" + id);
+            auto db_node = std::make_shared<domain_bridge::DomainBridge>(bridge_opts);
 
-                // RCLCPP_INFO(node_->get_logger(),
-                //             "Transmitting CAV pose and control cmd between Domain 100 and #%d", topic_info.id);
-                std::ostringstream f_topic_name_pose;
-                f_topic_name_pose << "Ego_pose";
-                domain_bridge::TopicBridgeOptions topic_option_pose;
-                topic_option_pose.remap_name(f_topic_name_pose.str());
-                
-                std::ostringstream f_topic_name_accel;
-                f_topic_name_accel << "CAV_" << std::setw(2) << std::setfill('0') << topic_info.id << "_accel";
-                domain_bridge::TopicBridgeOptions topic_option_accel;
-                topic_option_accel.remap_name(f_topic_name_accel.str());
+            domain_bridge::TopicBridgeOptions pose_remap;
+            pose_remap.remap_name("/cav" + id + "/ego_pose");
+            db_node->bridge_topic(
+                "/sim/cav" + id + "/pose",
+                "geometry_msgs/msg/PoseStamped",
+                100, cav_id, pose_remap);
 
-                db_node->bridge_topic(topic_info.name, "geometry_msgs/msg/PoseStamped", 100, topic_info.id, topic_option_pose);    
-                db_node->bridge_topic("/Accel", "geometry_msgs/msg/Accel", topic_info.id, 100, topic_option_accel);    
-                
-                std::pair<int, int> p = std::make_pair(100, topic_info.id);
-                active_bridges[p] = db_node;
-                db_node->add_to_executor(executor);
-            }
+            domain_bridge::TopicBridgeOptions accel_remap;
+            accel_remap.remap_name("/sim/cav" + id + "/accel");
+            db_node->bridge_topic(
+                "/cav" + id + "/accel_cmd",
+                "geometry_msgs/msg/Accel",
+                cav_id, 100, accel_remap);
 
-            else
-            {
-                for (const auto &cav_topic : vec_topics)
-                {
-                    if (!cav_topic.is_cav) {
-                        continue;
-                    }
-                    std::ostringstream node_name_ss;
-                    node_name_ss << "f"<< std::setw(2) << std::setfill('0') << topic_info.id <<"t" << std::setw(2) << std::setfill('0') << cav_topic.id;
+            // Legacy aliases in SIM domain (100) for existing SIM/RViz consumers.
+            const int rviz_slot = cav_id - 1;
 
-                    domain_bridge::DomainBridgeOptions bridge_opts;
-                    bridge_opts.name(node_name_ss.str());
+            domain_bridge::TopicBridgeOptions ego_pose_legacy_remap;
+            ego_pose_legacy_remap.remap_name("/CAV_" + id);
+            db_node->bridge_topic(
+                "/cav" + id + "/ego_pose",
+                "geometry_msgs/msg/PoseStamped",
+                cav_id, 100, ego_pose_legacy_remap);
 
-                    auto db_node = std::make_shared<domain_bridge::DomainBridge>(bridge_opts);
+            domain_bridge::TopicBridgeOptions global_path_legacy_remap;
+            global_path_legacy_remap.remap_name("/viz/slot" + std::to_string(rviz_slot) + "/global_path");
+            db_node->bridge_topic(
+                "/cav" + id + "/global_path",
+                "nav_msgs/msg/Path",
+                cav_id, 100, global_path_legacy_remap);
 
-                    // RCLCPP_INFO(node_->get_logger(),
-                    //             "Transmitting HV %d pose to CAV %d's Domain", topic_info.id, cav_topic.id);
-                    
-                    db_node->bridge_topic(topic_info.name, "geometry_msgs/msg/PoseStamped", 100, cav_topic.id);
+            domain_bridge::TopicBridgeOptions local_path_legacy_remap;
+            local_path_legacy_remap.remap_name("/viz/slot" + std::to_string(rviz_slot) + "/local_path");
+            db_node->bridge_topic(
+                "/cav" + id + "/local_path",
+                "nav_msgs/msg/Path",
+                cav_id, 100, local_path_legacy_remap);
 
-                    std::pair<int, int> p = std::make_pair(topic_info.id, cav_topic.id);
-                    active_bridges[p] = db_node;
-                    db_node->add_to_executor(executor);
-                }
-            }
+            domain_bridge::TopicBridgeOptions marker_legacy_remap;
+            marker_legacy_remap.remap_name("/viz/slot" + std::to_string(rviz_slot) + "/car_marker");
+            db_node->bridge_topic(
+                "/cav" + id + "/car_marker",
+                "visualization_msgs/msg/Marker",
+                cav_id, 100, marker_legacy_remap);
+
+            domain_bridge::TopicBridgeOptions marker_array_legacy_remap;
+            marker_array_legacy_remap.remap_name("/viz/slot" + std::to_string(rviz_slot) + "/car_marker_array");
+            db_node->bridge_topic(
+                "/cav" + id + "/car_marker_array",
+                "visualization_msgs/msg/MarkerArray",
+                cav_id, 100, marker_array_legacy_remap);
+
+            domain_bridge::TopicBridgeOptions mpc_pred_legacy_remap;
+            mpc_pred_legacy_remap.remap_name("/mpc_pred_cav" + id);
+            db_node->bridge_topic(
+                "/cav" + id + "/mpc_predicted_path",
+                "nav_msgs/msg/Path",
+                cav_id, 100, mpc_pred_legacy_remap);
+
+            domain_bridge::TopicBridgeOptions accel_cmd_legacy_remap;
+            accel_cmd_legacy_remap.remap_name("/CAV_" + id + "_accel");
+            db_node->bridge_topic(
+                "/cav" + id + "/accel_cmd",
+                "geometry_msgs/msg/Accel",
+                cav_id, 100, accel_cmd_legacy_remap);
+
+            domain_bridge::TopicBridgeOptions accel_raw_legacy_remap;
+            accel_raw_legacy_remap.remap_name("/CAV_" + id + "_accel_raw");
+            db_node->bridge_topic(
+                "/cav" + id + "/accel_raw",
+                "geometry_msgs/msg/Accel",
+                cav_id, 100, accel_raw_legacy_remap);
+
+            active_bridges[{100, cav_id}] = db_node;
+            db_node->add_to_executor(executor);
+        }
+
+        for (int hv_id : hv_ids) {
+            std::ostringstream id_ss;
+            id_ss << std::setw(2) << std::setfill('0') << hv_id;
+            const std::string id = id_ss.str();
+
+            domain_bridge::DomainBridgeOptions bridge_opts;
+            bridge_opts.name("sim_hv_" + id);
+            auto db_node = std::make_shared<domain_bridge::DomainBridge>(bridge_opts);
+
+            domain_bridge::TopicBridgeOptions pose_remap;
+            pose_remap.remap_name("/hv" + id + "/pose");
+            db_node->bridge_topic(
+                "/sim/hv" + id + "/pose",
+                "geometry_msgs/msg/PoseStamped",
+                100, hv_id, pose_remap);
+
+            active_bridges[{100, hv_id}] = db_node;
+            db_node->add_to_executor(executor);
         }
     }
 
 protected:
     bool active_ = false;
-    std::vector<TopicInfo> vec_topics;
     rclcpp::Node::SharedPtr node_;
 
     std::map<std::pair<int, int>, std::shared_ptr<domain_bridge::DomainBridge>> active_bridges;

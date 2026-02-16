@@ -106,8 +106,8 @@ public:
         auto qos = rclcpp::SensorDataQoS();
 
         if (AV) {
-            name.sub = "/" + type + "_" + padded + "_accel";
-            name.pub = "/" + type + "_" + padded;
+            name.sub = "/sim/cav" + padded + "/accel";
+            name.pub = "/sim/cav" + padded + "/pose";
             name.is_cav = true;
             AVIDs[name.sub] = number;
 
@@ -115,7 +115,7 @@ public:
                 name.sub, qos, [this, name](const geometry_msgs::msg::Accel::SharedPtr msg) { messages_cav[name.sub] = msg; });
             publisher[name.pub] = this->create_publisher<geometry_msgs::msg::PoseStamped>(name.pub, qos);
         } else {
-            name.sub = "/" + type + "_" + padded;
+            name.sub = "/sim/hv" + padded + "/pose";
             name.is_cav = false;
             HVIDs[name.sub] = number;
 

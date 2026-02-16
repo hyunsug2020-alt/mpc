@@ -53,7 +53,8 @@ def generate_launch_description():
             executable='rviz2',
             name='rviz2',
             arguments=['-d', rviz_config],  # 설정된 .rviz 파일 로드
-            output='screen'
+            output='screen',
+            additional_env={"ROS_DOMAIN_ID": "100"},
         )
     )
 
@@ -66,6 +67,7 @@ def generate_launch_description():
             executable="hdmap_visualizer.py",
             name="hdmap_visualizer",
             output="screen",
+            additional_env={"ROS_DOMAIN_ID": "100"},
         )
     )
 
@@ -85,7 +87,8 @@ def generate_launch_description():
                 parameters=[
                     {"cav_id": hv_id, "node_sequence": hv_path, "rviz_slot": -1}
                 ],
-                remappings=[("/user_global_path", f"/user_global_path_hv{hv_id}")],
+                remappings=[("/user_global_path", f"/hv{hv_id}/global_path")],
+                additional_env={"ROS_DOMAIN_ID": str(hv_id)},
             )
         )
 
@@ -104,6 +107,7 @@ def generate_launch_description():
         id_str = f"{cav_id:02d}"    # 예: "01"
         slot_str = f"{index + 1:02d}" # 예: "01" (YAML 섹션 찾기용)
         rviz_slot = index           # RViz 시각화 슬롯 (0~3)
+        cav_prefix = f"/cav{id_str}"
 
         # YAML에서 해당 슬롯(mpc_tracker_cavXX)의 파라미터 로드
         yaml_section_name = f"mpc_tracker_cav{slot_str}"
@@ -125,7 +129,11 @@ def generate_launch_description():
                         "rviz_slot": rviz_slot,
                     }
                 ],
-                remappings=[("/user_global_path", f"/user_global_path_cav{id_str}")],
+                remappings=[
+                    ("/user_global_path", f"{cav_prefix}/global_path"),
+                    (f"/viz/slot{rviz_slot}/global_path", f"{cav_prefix}/viz/global_path"),
+                ],
+                additional_env={"ROS_DOMAIN_ID": str(cav_id)},
             )
         )
 
@@ -144,12 +152,15 @@ def generate_launch_description():
                     },
                 ],
                 remappings=[
-                    ("/user_global_path", f"/user_global_path_cav{id_str}"),
-                    ("/Ego_pose", f"/CAV_{id_str}"),
-                    ("/local_path", f"/local_path_cav{id_str}"),
-                    ("/car_marker", f"/car_marker_cav{id_str}"),
-                    ("/lap_information", f"/lap_info_cav{id_str}"),
+                    (f"/user_global_path_cav{id_str}", f"{cav_prefix}/global_path"),
+                    (f"/CAV_{id_str}", f"{cav_prefix}/ego_pose"),
+                    (f"/local_path_cav{id_str}", f"{cav_prefix}/local_path"),
+                    (f"/car_marker_{id_str}", f"{cav_prefix}/car_marker"),
+                    (f"/lap_info_cav{id_str}", f"{cav_prefix}/lap_info"),
+                    (f"/viz/slot{rviz_slot}/local_path", f"{cav_prefix}/viz/local_path"),
+                    (f"/viz/slot{rviz_slot}/car_marker", f"{cav_prefix}/viz/car_marker"),
                 ],
+                additional_env={"ROS_DOMAIN_ID": str(cav_id)},
             )
         )
 
@@ -162,11 +173,14 @@ def generate_launch_description():
                 output="screen",
                 parameters=[node_params, {"target_cav_id": cav_id}],
                 remappings=[
-                    ("/local_path", f"/local_path_cav{id_str}"),
-                    ("/Ego_pose", f"/CAV_{id_str}"),
-                    ("/Accel", f"/CAV_{id_str}_accel"),  # simulator subscribes here
-                    ("/mpc_predicted_path", f"/mpc_pred_cav{id_str}"),
+                    ("/local_path", f"{cav_prefix}/local_path"),
+                    ("/Ego_pose", f"{cav_prefix}/ego_pose"),
+                    ("/Accel", f"{cav_prefix}/accel_cmd"),
+                    ("/mpc_predicted_path", f"{cav_prefix}/mpc_predicted_path"),
+                    (f"/CAV_{id_str}_accel_raw", f"{cav_prefix}/accel_raw"),
+                    ("/mpc_performance", f"{cav_prefix}/mpc_performance"),
                 ],
+                additional_env={"ROS_DOMAIN_ID": str(cav_id)},
             )
         )
 

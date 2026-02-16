@@ -26,12 +26,15 @@ namespace bisa
         nav_msgs::msg::Path::SharedPtr global_path_;
         std::optional<geometry_msgs::msg::Pose> current_pose_;
 
-        size_t local_path_size_ = 50;
+        size_t local_path_size_ = 220;
         size_t current_waypoint_ = 0;
         int lap_count_ = 0;
 
         bool is_initialized_ = false;
-        int search_window = 100;
+        int search_window = 200;
+        size_t max_index_step_ = 20;
+        double reinit_distance_threshold_ = 2.0;
+        int smooth_window_ = 2;
 
         rclcpp::Time lap_start_time_;
         double total_distance_ = 0.0;

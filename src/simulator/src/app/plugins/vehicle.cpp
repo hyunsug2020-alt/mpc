@@ -9,6 +9,8 @@ namespace VehicleSystem {
         quat rotation = quat(1.0f, 0.0f, 0.0f, 0.0f);
         vec3 position = vec3(data.position, 0.0f);
         VehicleFunctions::findClosestLane(ecs, position, rotation);
+        const auto &worldState = world.source.get<WorldState>();
+        const bool physics_on_init = (worldState.state == WorldState::run);
         EntityID id = ecs.createEntity();
         ecs.add(id, Vehicle{.AV = data.av});
         ecs.add(id, State{.position = position,
@@ -16,7 +18,7 @@ namespace VehicleSystem {
                           .rotation = rotation});
         ecs.add(id, StartingPosition{.position = position});
         ecs.add(id, Motion{.speed = vec3(0.0f, 0.0f, 0.0f)});
-        ecs.add(id, Physics{.on = false});
+        ecs.add(id, Physics{.on = physics_on_init});
         ecs.add(id, Mesh{.name = "vehicle",
                          .color = vec3(0.3f, 0.3f, 0.3f) + vec3(!data.av * 0.7f, 0.0f, data.av * 0.7f)});
         ecs.add(id, MouseMesh{.bound = vec3(0.4f)});
@@ -51,6 +53,8 @@ namespace VehicleSystem {
             std::cout << "[LOG] " << "created CAV and pub 3D pose :{" << topic.publisher << "}\n";
         else
             std::cout << "[LOG] " << "created HV moving :{" << topic.subscriber << "}\n";
+        std::cout << "[DBG][SPAWN] physics.on=" << (physics_on_init ? "true" : "false")
+                  << ", id=" << id << "\n";
 
         EntityID textID = ecs.createEntity();
         ecs.add(id, TextTag{.id = textID});
@@ -114,16 +118,39 @@ namespace VehicleSystem {
     void checkInsideMap(ECS &ecs, World &world, real dt) {
         auto view = ecs.write<Vehicle, State, Physics>();
         view.iterate([&](EntityID id, Vehicle &vehicle, State &state, Physics &physics) {
-            if (state.position.x <= -5.75f or state.position.x >= 5.75f) {
-                physics.on = false;
-                ecs.markChanged<Physics>(id);
+            constexpr real x_min = -5.75f;
+            constexpr real x_max = 5.75f;
+            constexpr real y_min = -3.0f;
+            constexpr real y_max = 3.0f;
+            // Allow a small tolerance to avoid false trip from tiny integration overshoot.
+            constexpr real boundary_margin = 0.05f;
+
+            const bool out_x = (state.position.x <= x_min - boundary_margin) ||
+                               (state.position.x >= x_max + boundary_margin);
+            const bool out_y = (state.position.y <= y_min - boundary_margin) ||
+                               (state.position.y >= y_max + boundary_margin);
+            if (!(out_x || out_y)) {
                 return;
             }
-            if (state.position.y <= -3.0f or state.position.y >= 3.0f) {
-                physics.on = false;
-                ecs.markChanged<Physics>(id);
+
+            if (!physics.on) {
                 return;
-            } });
+            }
+
+            physics.on = false;
+            if (out_x) {
+                std::cout << "[DBG][MAP] physics.off set by x-boundary, id=" << id
+                          << ", x=" << state.position.x
+                          << ", y=" << state.position.y
+                          << ", margin=" << boundary_margin << "\n";
+            } else {
+                std::cout << "[DBG][MAP] physics.off set by y-boundary, id=" << id
+                          << ", x=" << state.position.x
+                          << ", y=" << state.position.y
+                          << ", margin=" << boundary_margin << "\n";
+            }
+            ecs.markChanged<Physics>(id);
+        });
     }
 
     void spawnVehicle(ECS &ecs, World &world, Event &baseEvent) {
