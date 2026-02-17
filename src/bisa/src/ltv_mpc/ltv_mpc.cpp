@@ -1,6 +1,7 @@
 #include "ltv_mpc.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 
 namespace bisa {
@@ -33,6 +34,7 @@ MPCCommand LTVMPC::computeControl(
     const geometry_msgs::msg::Pose& ego_pose,
     const std::vector<geometry_msgs::msg::PoseStamped>& local_path) {
   MPCCommand out;
+  const auto t0 = std::chrono::high_resolution_clock::now();
 
   if (local_path.size() < 5) return out;
 
@@ -66,8 +68,16 @@ MPCCommand LTVMPC::computeControl(
   Eigen::VectorXd l_cons, u_cons;
   buildInputConstraints(A_cons, l_cons, u_cons);
 
+  const auto t_model_end = std::chrono::high_resolution_clock::now();
+  out.model_time_us =
+      std::chrono::duration_cast<std::chrono::microseconds>(t_model_end - t0).count();
+
   Eigen::VectorXd u_opt;
+  const auto t_solver_start = std::chrono::high_resolution_clock::now();
   const bool solved = solver_.solve(P, q, A_cons, l_cons, u_cons, u_opt);
+  const auto t_solver_end = std::chrono::high_resolution_clock::now();
+  out.solver_time_us = std::chrono::duration_cast<std::chrono::microseconds>(
+      t_solver_end - t_solver_start).count();
   if (!solved || u_opt.size() == 0) return out;
 
   const double u0 = u_opt(0);

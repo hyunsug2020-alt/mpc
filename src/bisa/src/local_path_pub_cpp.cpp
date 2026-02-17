@@ -29,12 +29,16 @@ namespace bisa
         this->declare_parameter("search_window", 200);
         this->declare_parameter("max_index_step", 20);
         this->declare_parameter("reinit_distance_threshold", 2.0);
-        this->declare_parameter("smooth_window", 2);
+        this->declare_parameter("smooth_window", 1);
+        this->declare_parameter("corner_smooth_window", 0);
+        this->declare_parameter("corner_curvature_threshold", 0.08);
         local_path_size_ = static_cast<size_t>(std::max<int64_t>(20, this->get_parameter("local_path_size").as_int()));
         search_window = static_cast<int>(std::max<int64_t>(10, this->get_parameter("search_window").as_int()));
         max_index_step_ = static_cast<size_t>(std::max<int64_t>(1, this->get_parameter("max_index_step").as_int()));
         reinit_distance_threshold_ = std::max(0.5, this->get_parameter("reinit_distance_threshold").as_double());
         smooth_window_ = static_cast<int>(std::max<int64_t>(0, this->get_parameter("smooth_window").as_int()));
+        corner_smooth_window_ = static_cast<int>(std::max<int64_t>(0, this->get_parameter("corner_smooth_window").as_int()));
+        corner_curvature_threshold_ = std::max(0.0, this->get_parameter("corner_curvature_threshold").as_double());
 
         // RCLCPP_INFO(this->get_logger(), "Local Path Pub for CAV_%s (RViz Slot: %d)", id_str.c_str(), rviz_slot_);
 
@@ -294,17 +298,49 @@ namespace bisa
         }
 
         // 코너 불연속 완화를 위한 이동 평균 스무딩
+        std::vector<geometry_msgs::msg::PoseStamped> smoothed_points = raw_points;
+        auto curvature_at_raw = [&](size_t idx) -> double
+        {
+            if (raw_points.size() < 3) return 0.0;
+            const size_t i0 = (idx == 0) ? 0 : idx - 1;
+            const size_t i1 = idx;
+            const size_t i2 = std::min(idx + 1, raw_points.size() - 1);
+            if (i0 == i1 || i1 == i2) return 0.0;
+
+            const double x1 = raw_points[i0].pose.position.x;
+            const double y1 = raw_points[i0].pose.position.y;
+            const double x2 = raw_points[i1].pose.position.x;
+            const double y2 = raw_points[i1].pose.position.y;
+            const double x3 = raw_points[i2].pose.position.x;
+            const double y3 = raw_points[i2].pose.position.y;
+            const double dx1 = x2 - x1;
+            const double dy1 = y2 - y1;
+            const double dx2 = x3 - x2;
+            const double dy2 = y3 - y2;
+            const double cross = dx1 * dy2 - dy1 * dx2;
+            const double d1 = std::hypot(dx1, dy1);
+            const double d2 = std::hypot(dx2, dy2);
+            if (d1 < 1e-6 || d2 < 1e-6) return 0.0;
+            return (2.0 * cross) / (d1 * d2 * (d1 + d2) + 1e-6);
+        };
+
         for (size_t i = 0; i < raw_points.size(); ++i)
         {
-            geometry_msgs::msg::PoseStamped pose = raw_points[i];
-            if (smooth_window_ > 0)
+            int adaptive_window = smooth_window_;
+            const double kappa_abs = std::abs(curvature_at_raw(i));
+            if (kappa_abs > corner_curvature_threshold_)
+            {
+                adaptive_window = std::min(adaptive_window, corner_smooth_window_);
+            }
+
+            if (adaptive_window > 0)
             {
                 double sx = 0.0;
                 double sy = 0.0;
                 int cnt = 0;
-                const int i0 = std::max(0, static_cast<int>(i) - smooth_window_);
+                const int i0 = std::max(0, static_cast<int>(i) - adaptive_window);
                 const int i1 = std::min(static_cast<int>(raw_points.size()) - 1,
-                                        static_cast<int>(i) + smooth_window_);
+                                        static_cast<int>(i) + adaptive_window);
                 for (int j = i0; j <= i1; ++j)
                 {
                     sx += raw_points[static_cast<size_t>(j)].pose.position.x;
@@ -313,15 +349,33 @@ namespace bisa
                 }
                 if (cnt > 0)
                 {
-                    pose.pose.position.x = sx / static_cast<double>(cnt);
-                    pose.pose.position.y = sy / static_cast<double>(cnt);
+                    smoothed_points[i].pose.position.x = sx / static_cast<double>(cnt);
+                    smoothed_points[i].pose.position.y = sy / static_cast<double>(cnt);
                 }
             }
+        }
 
-            const size_t next = std::min(i + 1, raw_points.size() - 1);
-            const double dx = raw_points[next].pose.position.x - raw_points[i].pose.position.x;
-            const double dy = raw_points[next].pose.position.y - raw_points[i].pose.position.y;
-            const double yaw = std::atan2(dy, dx);
+        for (size_t i = 0; i < smoothed_points.size(); ++i)
+        {
+            geometry_msgs::msg::PoseStamped pose = smoothed_points[i];
+            size_t ref_from = i;
+            size_t ref_to = i;
+            if (smoothed_points.size() >= 2)
+            {
+                if (i + 1 < smoothed_points.size())
+                {
+                    ref_from = i;
+                    ref_to = i + 1;
+                }
+                else
+                {
+                    ref_from = i - 1;
+                    ref_to = i;
+                }
+            }
+            const double dx = smoothed_points[ref_to].pose.position.x - smoothed_points[ref_from].pose.position.x;
+            const double dy = smoothed_points[ref_to].pose.position.y - smoothed_points[ref_from].pose.position.y;
+            const double yaw = (std::hypot(dx, dy) > 1e-9) ? std::atan2(dy, dx) : 0.0;
             tf2::Quaternion q;
             q.setRPY(0.0, 0.0, yaw);
             pose.pose.orientation = tf2::toMsg(q);

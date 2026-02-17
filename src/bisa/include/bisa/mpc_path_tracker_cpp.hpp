@@ -24,6 +24,7 @@ public:
     MPCPathTrackerCpp();
 
 private:
+    int get_effective_horizon() const;
     void local_path_callback(const nav_msgs::msg::Path::SharedPtr msg);
     void pose_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg);
     void control_loop();
@@ -59,6 +60,11 @@ private:
     double prev_w_cmd_ = 0.0;
     rclcpp::Time prev_cmd_time_;
     bool cmd_initialized_ = false;
+    int effective_horizon_ = 20;
+    bool has_local_path_anchor_ = false;
+    double local_path_anchor_x_ = 0.0;
+    double local_path_anchor_y_ = 0.0;
+    double path_reset_distance_threshold_ = 1.0;
     
     // CAV ID
     int target_cav_id_;

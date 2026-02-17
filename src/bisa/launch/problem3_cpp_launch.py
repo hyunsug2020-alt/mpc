@@ -105,15 +105,18 @@ def generate_launch_description():
         node_seq = CAV_PATH_SETTINGS[index]
         
         id_str = f"{cav_id:02d}"    # 예: "01"
-        slot_str = f"{index + 1:02d}" # 예: "01" (YAML 섹션 찾기용)
+        slot_str = f"{index + 1:02d}" # 예: "01"
         rviz_slot = index           # RViz 시각화 슬롯 (0~3)
         cav_prefix = f"/cav{id_str}"
 
-        # YAML에서 해당 슬롯(mpc_tracker_cavXX)의 파라미터 로드
-        yaml_section_name = f"mpc_tracker_cav{slot_str}"
+        # YAML에서 CAV ID 기반 섹션 로드. 없으면 slot 기반 섹션으로 fallback.
+        yaml_section_name = f"mpc_tracker_cav{id_str}"
+        yaml_section_fallback = f"mpc_tracker_cav{slot_str}"
         node_params = {}
         if yaml_section_name in full_config:
             node_params = full_config[yaml_section_name].get("ros__parameters", {})
+        elif yaml_section_fallback in full_config:
+            node_params = full_config[yaml_section_fallback].get("ros__parameters", {})
 
         # (A) Global Path Publisher
         nodes.append(
@@ -176,8 +179,8 @@ def generate_launch_description():
                     ("/local_path", f"{cav_prefix}/local_path"),
                     ("/Ego_pose", f"{cav_prefix}/ego_pose"),
                     ("/Accel", f"{cav_prefix}/accel_cmd"),
+                    ("/Accel_raw", f"{cav_prefix}/accel_raw"),
                     ("/mpc_predicted_path", f"{cav_prefix}/mpc_predicted_path"),
-                    (f"/CAV_{id_str}_accel_raw", f"{cav_prefix}/accel_raw"),
                     ("/mpc_performance", f"{cav_prefix}/mpc_performance"),
                 ],
                 additional_env={"ROS_DOMAIN_ID": str(cav_id)},

@@ -89,6 +89,10 @@ MPCPathTrackerCpp::MPCPathTrackerCpp()
     this->declare_parameter("fallback_lookahead_index", 20);
     this->declare_parameter("fallback_max_abs_omega", 0.9);
     this->declare_parameter("fallback_blend", 0.85);
+    this->declare_parameter("kappa_limit_ref_velocity", -1.0);
+    this->declare_parameter("path_reset_distance_threshold", 1.0);
+    path_reset_distance_threshold_ =
+        std::max(0.1, this->get_parameter("path_reset_distance_threshold").as_double());
     
     // 파라미터 콜백 등록
     param_callback_handle_ = this->add_on_set_parameters_callback(
@@ -116,7 +120,7 @@ MPCPathTrackerCpp::MPCPathTrackerCpp()
     // Publisher 생성
     auto qos_cmd = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
     accel_pub_ = this->create_publisher<geometry_msgs::msg::Accel>(accel_topic, qos_cmd);
-    std::string accel_raw_topic = "/CAV_" + id_str + "_accel_raw";
+    std::string accel_raw_topic = "/Accel_raw";
     accel_pub_raw_ = this->create_publisher<geometry_msgs::msg::Accel>(accel_raw_topic, qos_cmd);
     pred_pub_ = this->create_publisher<nav_msgs::msg::Path>(pred_traj_topic, 10);
     perf_pub_ = this->create_publisher<bisa::msg::MPCPerformance>("/mpc_performance", 10);
@@ -166,17 +170,32 @@ void MPCPathTrackerCpp::update_controller_params() {
     const double q_heading = read_nan_double("Q_heading");
     if (std::isfinite(q_heading)) cfg.w_theta = q_heading;
     const double r_v = read_nan_double("R_v");
-    if (std::isfinite(r_v)) cfg.w_kappa = r_v;
+    if (std::isfinite(r_v)) {
+        cfg.w_kappa = r_v;
+        RCLCPP_WARN_THROTTLE(
+            this->get_logger(), *this->get_clock(), 5000,
+            "Parameter 'R_v' is deprecated. Use 'weight_curvature' or 'w_kappa'.");
+    }
     const double r_w = read_nan_double("R_w");
-    if (std::isfinite(r_w)) cfg.w_u = r_w;
+    if (std::isfinite(r_w)) {
+        cfg.w_u = r_w;
+        RCLCPP_WARN_THROTTLE(
+            this->get_logger(), *this->get_clock(), 5000,
+            "Parameter 'R_w' is deprecated. Use 'weight_input' or 'w_u'.");
+    }
     const double max_accel = read_nan_double("max_accel");
     if (std::isfinite(max_accel) && max_accel > 0.0) {
         cfg.u_min = -max_accel;
         cfg.u_max = max_accel;
     }
     const double max_w = read_nan_double("max_angular_vel");
-    if (std::isfinite(max_w) && max_w > 0.0 && cfg.max_velocity > 1e-3) {
-        const double kappa_limit = max_w / cfg.max_velocity;
+    if (std::isfinite(max_w) && max_w > 0.0) {
+        const double v_ref_param = read_nan_double("kappa_limit_ref_velocity");
+        const double v_ref_for_limit =
+            (std::isfinite(v_ref_param) && v_ref_param > 0.0)
+            ? v_ref_param
+            : std::max(cfg.min_velocity, 0.1);
+        const double kappa_limit = max_w / v_ref_for_limit;
         cfg.kappa_min = -kappa_limit;
         cfg.kappa_max = kappa_limit;
     }
@@ -200,6 +219,9 @@ void MPCPathTrackerCpp::update_controller_params() {
     max_omega_abs_ = std::max(0.1, this->get_parameter("max_omega_abs").as_double());
     max_omega_rate_ = std::max(0.1, this->get_parameter("max_omega_rate").as_double());
     max_v_rate_ = std::max(0.1, this->get_parameter("max_v_rate").as_double());
+    path_reset_distance_threshold_ =
+        std::max(0.1, this->get_parameter("path_reset_distance_threshold").as_double());
+    effective_horizon_ = std::max(1, cfg.N);
 
     ltv_controller_->setConfig(cfg);
 
@@ -239,10 +261,33 @@ rcl_interfaces::msg::SetParametersResult MPCPathTrackerCpp::parameter_callback(
 
 void MPCPathTrackerCpp::local_path_callback(const nav_msgs::msg::Path::SharedPtr msg) {
     local_path_ = msg->poses;
+    if (local_path_.empty()) return;
+
+    const double ax = local_path_.front().pose.position.x;
+    const double ay = local_path_.front().pose.position.y;
+    if (!has_local_path_anchor_) {
+        local_path_anchor_x_ = ax;
+        local_path_anchor_y_ = ay;
+        has_local_path_anchor_ = true;
+        return;
+    }
+
+    const double dist = std::hypot(ax - local_path_anchor_x_, ay - local_path_anchor_y_);
+    if (dist > path_reset_distance_threshold_) {
+        if (ltv_controller_) ltv_controller_->reset();
+        if (legacy_controller_) legacy_controller_->reset_state();
+        cmd_initialized_ = false;
+    }
+    local_path_anchor_x_ = ax;
+    local_path_anchor_y_ = ay;
 }
 
 void MPCPathTrackerCpp::pose_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg) {
     current_pose_ = msg->pose;
+}
+
+int MPCPathTrackerCpp::get_effective_horizon() const {
+    return std::max(1, effective_horizon_);
 }
 
 void MPCPathTrackerCpp::control_loop() {
@@ -250,12 +295,23 @@ void MPCPathTrackerCpp::control_loop() {
 
     // 경로나 현재 위치가 없으면 정지
     if (local_path_.empty() || !current_pose_) {
+        if (ltv_controller_) ltv_controller_->reset();
+        if (legacy_controller_) legacy_controller_->reset_state();
+        cmd_initialized_ = false;
         publish_control(0.0, 0.0);
         publish_performance(0.0, 0.0, 0.0, -1, "NO_DATA");
         return;
     }
     
-    if (local_path_.size() < 3) {
+    const size_t min_path_points = static_cast<size_t>(get_effective_horizon() + 10);
+    if (local_path_.size() < min_path_points) {
+        RCLCPP_WARN_THROTTLE(
+            this->get_logger(), *this->get_clock(), 2000,
+            "Insufficient local path points: got=%zu required>=%zu",
+            local_path_.size(), min_path_points);
+        if (ltv_controller_) ltv_controller_->reset();
+        if (legacy_controller_) legacy_controller_->reset_state();
+        cmd_initialized_ = false;
         publish_control(0.0, 0.0);
         publish_performance(0.0, 0.0, 0.0, -1, "LOCAL_PATH_TOO_SHORT");
         return;
@@ -271,11 +327,9 @@ void MPCPathTrackerCpp::control_loop() {
     std::string solver_status = "UNKNOWN";
 
     if (use_ltv_mpc_) {
-        const auto start_solver = std::chrono::high_resolution_clock::now();
         auto output = ltv_controller_->computeControl(*current_pose_, local_path_);
-        const auto end_solver = std::chrono::high_resolution_clock::now();
-        solver_time_us = std::chrono::duration_cast<std::chrono::microseconds>(
-            end_solver - start_solver).count();
+        model_time_us = output.model_time_us;
+        solver_time_us = output.solver_time_us;
         v_cmd = output.v_cmd;
         w_cmd = output.omega_cmd;
         pred = std::move(output.predicted_xy);
@@ -286,6 +340,7 @@ void MPCPathTrackerCpp::control_loop() {
         const auto end_solver = std::chrono::high_resolution_clock::now();
         solver_time_us = std::chrono::duration_cast<std::chrono::microseconds>(
             end_solver - start_solver).count();
+        model_time_us = solver_time_us;
         v_cmd = output.velocity;
         w_cmd = output.angular_velocity;
         pred = std::move(output.predicted_trajectory);
@@ -375,7 +430,7 @@ void MPCPathTrackerCpp::publish_performance(double model_time_us, double solver_
     msg.model_time_us = model_time_us;
     msg.solver_time_us = solver_time_us;
     msg.total_time_us = total_time_us;
-    msg.horizon = this->get_parameter("prediction_horizon").as_int();
+    msg.horizon = get_effective_horizon();
     msg.solver_iterations = solver_iterations;
     msg.solver_status = solver_status;
     perf_pub_->publish(msg);
@@ -389,8 +444,8 @@ void MPCPathTrackerCpp::publish_control(double v, double w) {
     msg.linear.x = v;
     msg.angular.z = w;
 
-    if (accel_pub_) accel_pub_->publish(msg);         // /Accel -> remapped to /CAV_XX_accel
-    if (accel_pub_raw_) accel_pub_raw_->publish(msg); // /Accel_raw -> optional remap/debug
+    if (accel_pub_) accel_pub_->publish(msg);         // /Accel -> remapped to /cavXX/accel_cmd
+    if (accel_pub_raw_) accel_pub_raw_->publish(msg); // /Accel_raw -> remapped to /cavXX/accel_raw
 }
 
 void MPCPathTrackerCpp::publish_predicted_path(

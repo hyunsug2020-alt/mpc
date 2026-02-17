@@ -15,6 +15,10 @@ void MPCControllerCpp::update_parameters(const LTVMPCParams& params) {
     params_ = params;
 }
 
+void MPCControllerCpp::reset_state() {
+    current_kappa_ = 0.0;
+}
+
 // ===================================================================
 // 올바른 Quaternion to Yaw 변환
 // ===================================================================
@@ -50,7 +54,7 @@ double MPCControllerCpp::quaternion_to_yaw(const geometry_msgs::msg::Quaternion&
 // ===================================================================
 // ẋ = Ac*x + Bc*u + Ec*z
 // 
-// x = [dr, theta-theta_r, kappa, theta_r, kappa_r]^T
+// x = [dr, theta, kappa, theta_r, kappa_r]^T
 // u = kappa_dot (곡률 변화율)
 // z = kappa_r_dot (기준 곡률 변화율)
 // ===================================================================
@@ -184,12 +188,12 @@ void MPCControllerCpp::build_prediction_matrices(
         C_list[k] = C_k;
     }
     
-    // A_bar 구성: x(k) = ∏[i=0 to k-1] A(i) * x0
+    // A_bar 구성: x(k) = A(k-1) ... A(1) A(0) * x0
     A_bar = Eigen::MatrixXd::Zero(5 * N, 5);
     for (int i = 0; i < N; ++i) {
         Eigen::MatrixXd prod = Eigen::MatrixXd::Identity(5, 5);
         for (int j = 0; j <= i; ++j) {
-            prod = A_list[i - j] * prod;
+            prod = A_list[j] * prod;
         }
         A_bar.block(i * 5, 0, 5, 5) = prod;
     }
@@ -227,14 +231,14 @@ void MPCControllerCpp::build_prediction_matrices(
 }
 
 // ===================================================================
-// Equation (11): 비용 함수 행렬 (출력 공간에서 정의)
+// Equation (11): 비용 함수 행렬 (상태 공간에서 정의)
 // ===================================================================
-// J = y^T*Q*y + u^T*R*u
+// J = x^T*Q*x + u^T*R*u
 //
-// Q: 출력 비용 (4N x 4N, 블록 대각)
+// Q: 상태 비용 (5N x 5N, 블록 대각)
 // R: 입력 비용 (N x N, 대각)
 //
-// y = [d1, d2, d3, kappa]^T (4차원 출력)
+// x = [dr, theta, kappa, theta_r, kappa_r]^T (5차원 상태)
 // ===================================================================
 void MPCControllerCpp::compute_cost_matrices(
     const std::vector<double>& v_profile,
@@ -243,8 +247,8 @@ void MPCControllerCpp::compute_cost_matrices(
     
     int N = params_.N;
     
-    // Q_bar: 블록 대각 행렬 (4N x 4N) - 출력 공간
-    Q_bar = Eigen::MatrixXd::Zero(4 * N, 4 * N);
+    // Q_bar: 블록 대각 행렬 (5N x 5N) - 상태 공간
+    Q_bar = Eigen::MatrixXd::Zero(5 * N, 5 * N);
     
     for (int k = 0; k < N; ++k) {
         double v_k = (k < (int)v_profile.size()) ? v_profile[k] : v_profile.back();
@@ -253,20 +257,21 @@ void MPCControllerCpp::compute_cost_matrices(
         double wd_k = params_.wd;
         double wkappa_k = params_.wkappa + 0.5 * v_k;  // 고속에서 곡률 더 패널티
         
-        // Q(k): 4x4 행렬 - 출력에 대한 비용
-        // l(y) = wd*(d1^2 + d2^2 + d3^2) + wkappa*kappa^2
-        Eigen::MatrixXd Q_k = Eigen::MatrixXd::Zero(4, 4);
-        Q_k(0, 0) = wd_k;          // d1^2 (후륜)
-        Q_k(1, 1) = wd_k;          // d2^2 (중앙)
-        Q_k(2, 2) = wd_k;          // d3^2 (전륜)
-        Q_k(3, 3) = wkappa_k;      // kappa^2
+        // LTV core와 동일한 heading penalty: (theta - theta_r)^2
+        Eigen::MatrixXd Q_k = Eigen::MatrixXd::Zero(5, 5);
+        Q_k(0, 0) = wd_k;
+        Q_k(1, 1) = params_.wtheta;
+        Q_k(1, 3) = -params_.wtheta;
+        Q_k(2, 2) = wkappa_k;
+        Q_k(3, 1) = -params_.wtheta;
+        Q_k(3, 3) = params_.wtheta;
         
-        Q_bar.block(k * 4, k * 4, 4, 4) = Q_k;
+        Q_bar.block(k * 5, k * 5, 5, 5) = Q_k;
     }
     
     // R_bar: 입력 비용 (대각 행렬)
     // 최소값 보장으로 수치 안정성 향상
-    double wu_safe = std::max(params_.wu, 1.0);  // 최소 1.0
+    double wu_safe = std::max(params_.wu, 1e-9);  // very small floor only for numerical stability
     R_bar = Eigen::MatrixXd::Identity(N, N) * wu_safe;
 }
 
@@ -289,9 +294,9 @@ double MPCControllerCpp::compute_curvature_3points(
     
     if (d1 < 1e-6 || d2 < 1e-6) return 0.0;
     
-    // κ = 2 * |cross| / (d1 * d2 * (d1 + d2))
-    double ds = (d1 + d2) * 0.5;
-    return cross / (ds * ds + 1e-6);
+    // Signed curvature with consistent 1/m unit.
+    // κ = 2 * cross / (d1 * d2 * (d1 + d2))
+    return (2.0 * cross) / (d1 * d2 * (d1 + d2) + 1e-6);
 }
 
 // [다음 파일에 계속...]
@@ -331,7 +336,7 @@ int MPCControllerCpp::find_closest_waypoint(
 // ===================================================================
 // Equation (7): 상태 벡터 계산
 // ===================================================================
-// x = [dr, theta-theta_r, kappa, theta_r, kappa_r]^T
+// x = [dr, theta, kappa, theta_r, kappa_r]^T
 //
 // dr: 기준 경로로부터의 수직 거리 (lateral deviation)
 // theta: 차량 방향각
@@ -374,8 +379,11 @@ Eigen::VectorXd MPCControllerCpp::compute_state_vector(
         const double dyr = reference_path[idx1].pose.position.y - reference_path[idx0].pose.position.y;
         if (std::hypot(dxr, dyr) > 1e-6) {
             const double tangent_yaw = std::atan2(dyr, dxr);
-            // Blend to avoid abrupt heading flips from noisy orientation messages.
-            theta_ref = 0.7 * theta_ref + 0.3 * tangent_yaw;
+            // Blend on wrapped delta to avoid ±pi boundary artifacts.
+            double dyaw = tangent_yaw - theta_ref;
+            while (dyaw > M_PI) dyaw -= 2.0 * M_PI;
+            while (dyaw < -M_PI) dyaw += 2.0 * M_PI;
+            theta_ref += 0.3 * dyaw;
         }
 
         while (theta_ref > M_PI) theta_ref -= 2.0 * M_PI;
@@ -389,13 +397,6 @@ Eigen::VectorXd MPCControllerCpp::compute_state_vector(
     
     // 기준 경로의 법선 방향으로 투영
     double dr = -std::sin(theta_ref) * dx + std::cos(theta_ref) * dy;
-    
-    // theta - theta_r: 방향 오차
-    double dtheta = theta - theta_ref;
-    
-    // 각도 정규화 [-π, π]
-    while (dtheta > M_PI) dtheta -= 2.0 * M_PI;
-    while (dtheta < -M_PI) dtheta += 2.0 * M_PI;
     
     // kappa: 현재 차량 곡률 (저장된 값 사용)
     double kappa = current_kappa_;
@@ -415,7 +416,7 @@ Eigen::VectorXd MPCControllerCpp::compute_state_vector(
     
     // 상태 벡터 구성
     x0(0) = dr;
-    x0(1) = dtheta;
+    x0(1) = theta;
     x0(2) = kappa;
     x0(3) = theta_ref;
     x0(4) = kappa_r;
@@ -563,8 +564,8 @@ Eigen::SparseMatrix<double> MPCControllerCpp::dense_to_sparse(
 //   minimize:  0.5*u^T*H*u + f^T*u
 //   subject to: l <= A_qp*u <= u
 //
-// H = B_bar^T * C_bar^T * Q_output * C_bar * B_bar + R
-// f = B_bar^T * C_bar^T * Q_output * C_bar * (A_bar*x0 + E_bar*z)
+// H = B_bar^T * Q_state * B_bar + R
+// f = B_bar^T * Q_state * (A_bar*x0 + E_bar*z)
 // ===================================================================
 bool MPCControllerCpp::formulate_qp(
     const Eigen::VectorXd& x0,
@@ -578,11 +579,10 @@ bool MPCControllerCpp::formulate_qp(
     Eigen::VectorXd& u) {
     
     int N = params_.N;
-    int NS = params_.NS;
-    
     // 예측 행렬 계산
     Eigen::MatrixXd A_bar, B_bar, E_bar, C_bar;
     build_prediction_matrices(v_profile, A_bar, B_bar, E_bar, C_bar);
+    (void)C_bar;
     
     // 비용 행렬 계산
     Eigen::MatrixXd Q_bar, R_bar;
@@ -591,13 +591,9 @@ bool MPCControllerCpp::formulate_qp(
     // 상태 예측: x_pred = A_bar*x0 + E_bar*z
     Eigen::VectorXd x_pred = A_bar * x0 + E_bar * z;
     
-    // 출력 예측: y_pred = C_bar * x_pred
-    Eigen::VectorXd y_pred = C_bar * x_pred;
-    
-    // Equation (18): QP 변환
-    // H = B^T * C^T * Q * C * B + R
-    Eigen::MatrixXd B_full = C_bar * B_bar;  // (4N x N)
-    Eigen::MatrixXd H_dense = B_full.transpose() * Q_bar * B_full + R_bar;
+    // Equation (18): QP 변환 (state-space cost)
+    // H = B^T * Q * B + R
+    Eigen::MatrixXd H_dense = B_bar.transpose() * Q_bar * B_bar + R_bar;
     
     // 대칭화 (수치 오차 방지)
     H_dense = 0.5 * (H_dense + H_dense.transpose());
@@ -605,22 +601,11 @@ bool MPCControllerCpp::formulate_qp(
     // Regularization 추가 (PSD 보장)
     // P가 positive semi-definite이어야 convex QP
     int n = H_dense.rows();
-    double eps = 1e-1;  // 매우 강력한 정규화 (확실한 convexity 보장)
+    double eps = 1e-6;  // 작은 regularization으로 convexity 보장 + 해 왜곡 최소화
     H_dense += eps * Eigen::MatrixXd::Identity(n, n);
     
-    // f = B^T * C^T * Q * C * (A*x0 + E*z)
-    Eigen::VectorXd f = B_full.transpose() * Q_bar * y_pred;
-
-    // Add heading-error state penalty directly in state space.
-    // This supplements output-space cost, which only penalizes lateral offsets and curvature.
-    if (params_.wtheta > 0.0) {
-        Eigen::MatrixXd Qx_heading = Eigen::MatrixXd::Zero(5 * N, 5 * N);
-        for (int k = 0; k < N; ++k) {
-            Qx_heading(k * 5 + 1, k * 5 + 1) = params_.wtheta;  // dtheta state index
-        }
-        H_dense += B_bar.transpose() * Qx_heading * B_bar;
-        f += B_bar.transpose() * Qx_heading * x_pred;
-    }
+    // f = B^T * Q * (A*x0 + E*z)
+    Eigen::VectorXd f = B_bar.transpose() * Q_bar * x_pred;
     
     // OSQP는 0.5*x^T*P*x + q^T*x 형태를 기대
     // 우리: x^T*H*x + 2*f^T*x

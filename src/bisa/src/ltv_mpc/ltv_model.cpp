@@ -44,8 +44,9 @@ double LTVModel::curvature3pt(double x1, double y1, double x2, double y2, double
   const double d2 = std::hypot(dx2, dy2);
 
   if (d1 < 1e-6 || d2 < 1e-6) return 0.0;
-  const double ds = 0.5 * (d1 + d2);
-  return cross / (ds * ds + 1e-6);
+  // Signed curvature with consistent 1/m unit.
+  // κ = 2 * cross / (d1 * d2 * (d1 + d2))
+  return (2.0 * cross) / (d1 * d2 * (d1 + d2) + 1e-6);
 }
 
 int LTVModel::findClosestIndex(
@@ -58,8 +59,9 @@ int LTVModel::findClosestIndex(
   double best = std::numeric_limits<double>::max();
   int best_idx = 0;
 
-  // 인덱스 증가 방향에 바이어스를 줘서 교차/근접 구간에서 기준점 점프를 줄인다.
-  for (size_t i = 0; i < path.size(); ++i) {
+  // local_path is already a forward window; limit search to front segment to avoid backward jumps.
+  const int search_limit = std::min(static_cast<int>(path.size()), 30);
+  for (int i = 0; i < search_limit; ++i) {
     const double dx = path[i].pose.position.x - x;
     const double dy = path[i].pose.position.y - y;
     const double d2 = dx * dx + dy * dy;
@@ -102,7 +104,8 @@ void LTVModel::buildReferenceProfiles(
 
   const int closest = findClosestIndex(ego_pose, path);
   const int last_idx = static_cast<int>(path.size()) - 1;
-  const int start_idx = std::min(last_idx, std::max(0, closest + std::max(0, cfg_.ref_preview_steps)));
+  const int start_idx =
+      std::min(last_idx, std::max(0, closest + std::max(0, cfg_.ref_preview_steps)));
 
   for (int k = 0; k <= N; ++k) {
     const int idx = std::min(start_idx + k, last_idx);
@@ -214,7 +217,7 @@ void LTVModel::buildBatchDynamics(const Eigen::VectorXd& v_bar, Eigen::MatrixXd&
   for (int i = 0; i < N; ++i) {
     MatA prod = MatA::Identity();
     for (int j = 0; j <= i; ++j) {
-      prod = A_list[i - j] * prod;
+      prod = A_list[j] * prod;
     }
     A_bar.block(i * kLTVNx, 0, kLTVNx, kLTVNx) = prod;
     C_bar.block(i * kLTVNy, i * kLTVNx, kLTVNy, kLTVNx) = Ck;

@@ -36,6 +36,8 @@ struct MPCCommand {
   double v_cmd = 0.0;
   double omega_cmd = 0.0;
   double kappa_cmd = 0.0;
+  double model_time_us = 0.0;
+  double solver_time_us = 0.0;
   bool solved = false;
   std::vector<double> u_seq;
   std::vector<std::array<double, 3>> predicted_xy;

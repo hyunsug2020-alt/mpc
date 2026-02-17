@@ -21,7 +21,6 @@ namespace bisa
         void pose_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg);
         void publish_local_path();
         void publish_car_marker();
-        double calculate_total_distance();
 
         nav_msgs::msg::Path::SharedPtr global_path_;
         std::optional<geometry_msgs::msg::Pose> current_pose_;
@@ -34,7 +33,9 @@ namespace bisa
         int search_window = 200;
         size_t max_index_step_ = 20;
         double reinit_distance_threshold_ = 2.0;
-        int smooth_window_ = 2;
+        int smooth_window_ = 1;
+        int corner_smooth_window_ = 0;
+        double corner_curvature_threshold_ = 0.08;
 
         rclcpp::Time lap_start_time_;
         double total_distance_ = 0.0;

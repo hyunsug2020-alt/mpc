@@ -5,6 +5,9 @@
     high_priority_ids: [1,2]
     local_path_size: 140
     search_window: 120
+    smooth_window: 0
+    corner_smooth_window: 0
+    corner_curvature_threshold: 0.03
 
 # -----------------------------------------------------------------------------
 # MPC 튜닝 가이드 (YAML만 수정해서 빠르게 실험)
@@ -35,17 +38,18 @@
 mpc_tracker_cav01:
   ros__parameters:
     time_step: 0.05
-    Q_pos: 240.0
-    Q_heading: 170.0
-    R_v: 1.2
-    R_w: 1.3
-    max_velocity: 0.70
+    Q_pos: 100.0
+    Q_heading: 80.0
+    weight_curvature: 2.0
+    weight_input: 0.5
+    max_velocity: 0.55
     max_accel: 1.5
     max_angular_vel: 1.6
-    max_omega_abs: 1.3
+    kappa_limit_ref_velocity: 0.35
+    max_omega_abs: 1.8
     max_omega_rate: 25.0
     max_v_rate: 4.0
-    ref_preview_steps: 24
+    ref_preview_steps: 8
     enable_path_fallback: false
     horizon: 60
 
@@ -53,17 +57,18 @@ mpc_tracker_cav01:
 mpc_tracker_cav02:
   ros__parameters:
     time_step: 0.05
-    Q_pos: 240.0
-    Q_heading: 170.0
-    R_v: 1.2
-    R_w: 1.3
-    max_velocity: 0.70
+    Q_pos: 100.0
+    Q_heading: 80.0
+    weight_curvature: 2.0
+    weight_input: 0.5
+    max_velocity: 0.55
     max_accel: 1.5
     max_angular_vel: 1.6
-    max_omega_abs: 1.3
+    kappa_limit_ref_velocity: 0.35
+    max_omega_abs: 1.8
     max_omega_rate: 25.0
     max_v_rate: 4.0
-    ref_preview_steps: 24
+    ref_preview_steps: 8
     enable_path_fallback: false
     horizon: 60
 
@@ -71,17 +76,18 @@ mpc_tracker_cav02:
 mpc_tracker_cav03:
   ros__parameters:
     time_step: 0.05
-    Q_pos: 300.0
-    Q_heading: 230.0
-    R_v: 1.0
-    R_w: 1.4
-    max_velocity: 0.60
+    Q_pos: 100.0
+    Q_heading: 80.0
+    weight_curvature: 2.0
+    weight_input: 0.5
+    max_velocity: 0.50
     max_accel: 1.5
     max_angular_vel: 2.0
-    max_omega_abs: 1.1
+    kappa_limit_ref_velocity: 0.35
+    max_omega_abs: 1.6
     max_omega_rate: 18.0
     max_v_rate: 3.0
-    ref_preview_steps: 28
+    ref_preview_steps: 8
     enable_path_fallback: false
     horizon: 60
 
@@ -89,17 +95,18 @@ mpc_tracker_cav03:
 mpc_tracker_cav04:
   ros__parameters:
     time_step: 0.05
-    Q_pos: 240.0
-    Q_heading: 170.0
-    R_v: 1.2
-    R_w: 1.3
-    max_velocity: 0.62
+    Q_pos: 100.0
+    Q_heading: 80.0
+    weight_curvature: 2.0
+    weight_input: 0.5
+    max_velocity: 0.48
     max_accel: 1.5
     max_angular_vel: 1.6
-    max_omega_abs: 1.0
+    kappa_limit_ref_velocity: 0.35
+    max_omega_abs: 1.6
     max_omega_rate: 16.0
     max_v_rate: 4.0
-    ref_preview_steps: 16
+    ref_preview_steps: 8
     enable_path_fallback: false
     horizon: 60
 
@@ -108,4 +115,4 @@ hv_settings:
   - id: 19
     node_sequence: [38, 41, 62, 38]
   - id: 20
-    node_sequence: [38, 41, 62, 38]
+    node_sequence: [62, 41, 38, 62]

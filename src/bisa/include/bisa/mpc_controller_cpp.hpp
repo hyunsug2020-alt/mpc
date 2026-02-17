@@ -78,6 +78,7 @@ public:
     ~MPCControllerCpp();
     
     void update_parameters(const LTVMPCParams& params);
+    void reset_state();
     
     ControlOutput compute_control(
         const geometry_msgs::msg::Pose& current_pose,
@@ -168,7 +169,7 @@ private:
     // 보조 함수들
     // ===================================================================
     
-    // Equation (7): 상태 벡터 계산 [dr, theta-theta_r, kappa, theta_r, kappa_r]
+    // Equation (7): 상태 벡터 계산 [dr, theta, kappa, theta_r, kappa_r]
     Eigen::VectorXd compute_state_vector(
         const geometry_msgs::msg::Pose& current_pose,
         const std::vector<geometry_msgs::msg::PoseStamped>& reference_path
