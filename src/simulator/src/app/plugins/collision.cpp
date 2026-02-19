@@ -70,8 +70,6 @@ namespace CollisionSystem {
     }
 
     void updateCollisions(ECS &ecs, World &world, real dt) {
-        bool collision = false;
-
         auto outer = ecs.write<State, CollisionMesh, Physics, ROSTopic>();
         auto inner = ecs.write<State, CollisionMesh, Physics, ROSTopic>();
         outer.iterate([&](EntityID idA, State &stateA, CollisionMesh &meshA, Physics &physicsA, ROSTopic &topicA) {
@@ -84,39 +82,18 @@ namespace CollisionSystem {
                 auto vertsA = CollisionFunctions::getTransformedVertices(meshA.points, stateA.position, stateA.rotation);
                 auto vertsB = CollisionFunctions::getTransformedVertices(meshB.points, stateB.position, stateB.rotation);
                 if (CollisionFunctions::checkCollisionSAT(vertsA, vertsB)) {
-                    collision = true;
-                    // size_t startA = topicA.publisher.find('/') + 1;
-                    // size_t endA = topicA.publisher.find('/', startA);
-                    std::string nameA = "";
-                    if (topicA.AV) {
-                        nameA = topicA.publisher;
-                    } else {
-                        nameA = topicA.subscriber;
-                    }
+                    std::string nameA = topicA.AV ? topicA.publisher : topicA.subscriber;
+                    std::string nameB = topicB.AV ? topicB.publisher : topicB.subscriber;
 
-                    // size_t startB = topicB.publisher.find('/') + 1;
-                    // size_t endB = topicB.publisher.find('/', startB);
-                    std::string nameB = "";
-                    if (topicB.AV) {
-                        nameB = topicB.publisher;
-                    } else {
-                        nameB = topicB.subscriber;
-                    }
+                    std::cout << "[LOG] Collision between: [" << nameA << "] and [" << nameB << "]\n";
 
-                    std::cout << "[LOG] " << "Collision between: [" << nameA << "] and [" << nameB << "]\n";
+                    // 충돌한 두 차량만 멈춤 (전체 차량 동결 방지)
+                    physicsA.on = false;
+                    physicsB.on = false;
+                    std::cout << "[DBG][COLLISION] physics.off: [" << nameA << "] and [" << nameB << "]\n";
                 }
             });
         });
-
-        if (collision) {
-            auto vehicles = ecs.write<Physics, ROSTopic>();
-            vehicles.iterate([&](EntityID id, Physics &physics, ROSTopic &topic) {
-                physics.on = false;
-                std::cout << "[DBG][COLLISION] physics.off set by collision, id=" << id
-                          << ", pub_topic=" << topic.publisher
-                          << ", sub_topic=" << topic.subscriber << "\n";
-            });
-        }
     };
 
 } // namespace CollisionSystem

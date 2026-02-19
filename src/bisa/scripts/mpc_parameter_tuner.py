@@ -72,6 +72,41 @@ PROFILES: Dict[str, Dict[str, Any]] = {
 class TunerError(RuntimeError):
     pass
 
+FLOAT_PARAM_KEYS = {
+    "time_step",
+    "Ts",
+    "Q_pos",
+    "Q_heading",
+    "weight_position",
+    "weight_heading",
+    "weight_curvature",
+    "weight_input",
+    "w_d",
+    "w_theta",
+    "w_kappa",
+    "w_u",
+    "max_velocity",
+    "min_velocity",
+    "max_accel",
+    "max_angular_vel",
+    "max_omega_abs",
+    "max_omega_rate",
+    "max_v_rate",
+    "kappa_limit_ref_velocity",
+    "fallback_min_abs_omega",
+    "fallback_max_abs_omega",
+    "fallback_blend",
+    "path_reset_distance_threshold",
+    "u_min",
+    "u_max",
+    "kappa_min_delta",
+    "kappa_max_delta",
+}
+
+def coerce_value_for_key(key: str, value: Any) -> Any:
+    if key in FLOAT_PARAM_KEYS and isinstance(value, int):
+        return float(value)
+    return value
 
 def load_yaml(path: Path) -> Dict[str, Any]:
     if not path.exists():
@@ -133,7 +168,7 @@ def parse_kv(item: str) -> (str, Any):
     key = key.strip()
     if not key:
         raise TunerError(f"Empty key in: {item}")
-    return key, parse_scalar(value)
+    return key, coerce_value_for_key(key, parse_scalar(value))
 
 
 def target_sections(doc: Dict[str, Any], cav: int | None, all_cavs: bool) -> List[str]:
@@ -180,7 +215,7 @@ def cmd_set(args: argparse.Namespace) -> int:
     path = Path(args.config)
     doc = load_yaml(path)
     sections = target_sections(doc, args.cav, args.all_cavs)
-    value = parse_scalar(args.value)
+    value = coerce_value_for_key(args.key, parse_scalar(args.value))
 
     for sec in sections:
         params = ensure_ros_params(doc, sec)

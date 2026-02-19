@@ -1,134 +1,112 @@
-# cav_config.yaml
 /**:
   ros__parameters:
-    cav_ids: [1,2,3,4]
-    high_priority_ids: [1,2]
+    cav_ids:
+    - 1
+    - 2
+    - 3
+    - 4
+    high_priority_ids:
+    - 1
+    - 2
     local_path_size: 140
     search_window: 120
-    smooth_window: 0
-    corner_smooth_window: 0
-    corner_curvature_threshold: 0.03
-
-# -----------------------------------------------------------------------------
-# MPC 튜닝 가이드 (YAML만 수정해서 빠르게 실험)
-# -----------------------------------------------------------------------------
-# 1) 반응 속도(코너를 얼마나 빨리 인지하는지)
-#   - horizon:
-#       작게(예: 50~80) -> 반응 빠름 / 크게(예: 100+) -> 부드럽지만 늦을 수 있음
-#   - ref_preview_steps:
-#       크게 -> 더 앞 코너를 미리 봄(조기 회전), 너무 크면 과민 가능
-#   - max_omega_rate:
-#       크게 -> 조향각속도(omega) 상승이 빨라짐, 작게 -> 완만
-#
-# 2) 회전 강도(얼마나 세게 꺾는지)
-#   - max_angular_vel:
-#       LTV 내부 곡률 한계로 매핑됨. 크게 -> 최대 회전 여유 증가
-#   - max_omega_abs:
-#       최종 yaw-rate 절대값 제한. 너무 작으면 코너에서 직진 성향
-#
-# 3) 속도
-#   - max_velocity:
-#       코너 실패 시 먼저 낮추면 안정적으로 추종됨
-#
-# 참고
-#   - enable_path_fallback: false  (현재 MPC only 모드)
-# -----------------------------------------------------------------------------
-
-# 슬롯 01
+    smooth_window: 2
+    corner_smooth_window: 1
+    corner_curvature_threshold: 0.05
 mpc_tracker_cav01:
   ros__parameters:
     time_step: 0.05
     Q_pos: 100.0
-    Q_heading: 110.0
+    Q_heading: 108.0
     weight_curvature: 2.0
-    weight_input: 0.25
-    max_velocity: 0.55
+    weight_input: 0.36
+    max_velocity: 0.5
     max_accel: 1.5
     max_angular_vel: 1.6
     kappa_limit_ref_velocity: 0.35
-    max_omega_abs: 2.2
-    max_omega_rate: 40.0
-    max_v_rate: 4.0
-    ref_preview_steps: 14
+    max_omega_abs: 1.7
+    max_omega_rate: 24.0
+    max_v_rate: 2.0
+    ref_preview_steps: 11
     enable_path_fallback: true
     fallback_min_abs_omega: 0.05
-    fallback_lookahead_index: 14
-    fallback_max_abs_omega: 1.3
-    fallback_blend: 0.65
-    horizon: 45
-
-# 슬롯 02
+    fallback_lookahead_index: 12
+    fallback_max_abs_omega: 0.85
+    fallback_blend: 0.15
+    horizon: 60
 mpc_tracker_cav02:
   ros__parameters:
     time_step: 0.05
     Q_pos: 100.0
-    Q_heading: 110.0
+    Q_heading: 108.0
     weight_curvature: 2.0
-    weight_input: 0.25
-    max_velocity: 0.55
+    weight_input: 0.36
+    max_velocity: 0.5
     max_accel: 1.5
     max_angular_vel: 1.6
     kappa_limit_ref_velocity: 0.35
-    max_omega_abs: 2.2
-    max_omega_rate: 40.0
-    max_v_rate: 4.0
-    ref_preview_steps: 14
+    max_omega_abs: 1.7
+    max_omega_rate: 24.0
+    max_v_rate: 2.0
+    ref_preview_steps: 11
     enable_path_fallback: true
     fallback_min_abs_omega: 0.05
-    fallback_lookahead_index: 14
-    fallback_max_abs_omega: 1.3
-    fallback_blend: 0.65
-    horizon: 45
-
-# 슬롯 03
+    fallback_lookahead_index: 12
+    fallback_max_abs_omega: 0.85
+    fallback_blend: 0.15
+    horizon: 60
 mpc_tracker_cav03:
   ros__parameters:
     time_step: 0.05
     Q_pos: 100.0
-    Q_heading: 110.0
+    Q_heading: 108.0
     weight_curvature: 2.0
-    weight_input: 0.25
-    max_velocity: 0.50
+    weight_input: 0.36
+    max_velocity: 0.46
     max_accel: 1.5
     max_angular_vel: 2.0
     kappa_limit_ref_velocity: 0.35
-    max_omega_abs: 2.0
-    max_omega_rate: 35.0
-    max_v_rate: 3.0
-    ref_preview_steps: 14
+    max_omega_abs: 1.65
+    max_omega_rate: 20.0
+    max_v_rate: 2.0
+    ref_preview_steps: 11
     enable_path_fallback: true
     fallback_min_abs_omega: 0.05
-    fallback_lookahead_index: 14
-    fallback_max_abs_omega: 1.3
-    fallback_blend: 0.65
-    horizon: 45
-
-# 슬롯 04
+    fallback_lookahead_index: 12
+    fallback_max_abs_omega: 0.8
+    fallback_blend: 0.15
+    horizon: 60
 mpc_tracker_cav04:
   ros__parameters:
     time_step: 0.05
     Q_pos: 100.0
-    Q_heading: 110.0
+    Q_heading: 108.0
     weight_curvature: 2.0
-    weight_input: 0.25
-    max_velocity: 0.48
+    weight_input: 0.36
+    max_velocity: 0.44
     max_accel: 1.5
     max_angular_vel: 1.6
     kappa_limit_ref_velocity: 0.35
-    max_omega_abs: 2.0
-    max_omega_rate: 32.0
-    max_v_rate: 4.0
-    ref_preview_steps: 14
+    max_omega_abs: 1.65
+    max_omega_rate: 19.0
+    max_v_rate: 2.0
+    ref_preview_steps: 11
     enable_path_fallback: true
     fallback_min_abs_omega: 0.05
-    fallback_lookahead_index: 14
-    fallback_max_abs_omega: 1.3
-    fallback_blend: 0.65
-    horizon: 45
-
-# HV 설정
+    fallback_lookahead_index: 12
+    fallback_max_abs_omega: 0.8
+    fallback_blend: 0.15
+    horizon: 60
 hv_settings:
-  - id: 19
-    node_sequence: [38, 41, 62, 38]
-  - id: 20
-    node_sequence: [62, 41, 38, 62]
+- id: 19
+  node_sequence:
+  - 38
+  - 41
+  - 62
+  - 38
+- id: 20
+  node_sequence:
+  - 62
+  - 41
+  - 38
+  - 62
