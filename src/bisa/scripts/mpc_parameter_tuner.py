@@ -1,225 +1,305 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import os
-import subprocess
-import time
-from datetime import datetime
-from itertools import product
+"""Simple YAML tuner for MPC parameters.
 
-import pandas as pd
+Use this tool to quickly inspect and modify per-CAV parameters in
+`src/bisa/config/cav_config.yaml` (or any compatible YAML file).
+
+Examples:
+  python3 mpc_parameter_tuner.py show --all
+  python3 mpc_parameter_tuner.py set --cav 1 --key max_omega_rate --value 45
+  python3 mpc_parameter_tuner.py set-many --cav 1 --set Q_heading=120 --set weight_input=0.2
+  python3 mpc_parameter_tuner.py apply-profile --name fast_corner
+  python3 mpc_parameter_tuner.py save-best --source cav_config.yaml --out cav_config.best.yaml
+"""
+
+from __future__ import annotations
+
+import argparse
+import copy
+import datetime as dt
+from pathlib import Path
+from typing import Any, Dict, List
+
 import yaml
 
 
-class MPCParameterTuner:
-    def __init__(self):
-        self.config_path = os.path.expanduser(
-            '~/Mobility_Challenge_Simulator/install/bisa/share/bisa/config/cav_config.yaml'
+DEFAULT_REPO = Path.home() / "Mobility_Challenge_Simulator"
+DEFAULT_CONFIG = DEFAULT_REPO / "src" / "bisa" / "config" / "cav_config.yaml"
+DEFAULT_BEST = DEFAULT_REPO / "src" / "bisa" / "config" / "cav_config.best.yaml"
+
+CAV_SECTIONS = [f"mpc_tracker_cav{i:02d}" for i in range(1, 5)]
+
+# Practical presets for quick iteration.
+PROFILES: Dict[str, Dict[str, Any]] = {
+    "stable": {
+        "Q_heading": 95.0,
+        "weight_input": 0.35,
+        "max_omega_abs": 1.8,
+        "max_omega_rate": 25.0,
+        "ref_preview_steps": 10,
+        "horizon": 55,
+        "enable_path_fallback": True,
+        "fallback_blend": 0.45,
+    },
+    "fast_corner": {
+        "Q_heading": 120.0,
+        "weight_input": 0.2,
+        "max_omega_abs": 2.3,
+        "max_omega_rate": 45.0,
+        "ref_preview_steps": 16,
+        "horizon": 40,
+        "enable_path_fallback": True,
+        "fallback_min_abs_omega": 0.04,
+        "fallback_lookahead_index": 12,
+        "fallback_max_abs_omega": 1.5,
+        "fallback_blend": 0.7,
+    },
+    "smooth_corner": {
+        "Q_heading": 105.0,
+        "weight_input": 0.3,
+        "max_omega_abs": 2.0,
+        "max_omega_rate": 30.0,
+        "ref_preview_steps": 12,
+        "horizon": 50,
+        "enable_path_fallback": True,
+        "fallback_blend": 0.55,
+    },
+}
+
+
+class TunerError(RuntimeError):
+    pass
+
+
+def load_yaml(path: Path) -> Dict[str, Any]:
+    if not path.exists():
+        raise TunerError(f"Config not found: {path}")
+    with path.open("r", encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    if not isinstance(data, dict):
+        raise TunerError("Top-level YAML is not a map")
+    return data
+
+
+def save_yaml(path: Path, data: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        yaml.safe_dump(data, f, sort_keys=False, allow_unicode=False)
+
+
+def backup_path(path: Path) -> Path:
+    stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    return path.with_suffix(path.suffix + f".{stamp}.bak")
+
+
+def cav_section(cav_id: int) -> str:
+    if cav_id < 1 or cav_id > 99:
+        raise TunerError(f"Invalid cav id: {cav_id}")
+    return f"mpc_tracker_cav{cav_id:02d}"
+
+
+def ensure_ros_params(doc: Dict[str, Any], section: str) -> Dict[str, Any]:
+    if section not in doc or not isinstance(doc[section], dict):
+        doc[section] = {"ros__parameters": {}}
+    sec = doc[section]
+    if "ros__parameters" not in sec or not isinstance(sec["ros__parameters"], dict):
+        sec["ros__parameters"] = {}
+    return sec["ros__parameters"]
+
+
+def parse_scalar(text: str) -> Any:
+    s = text.strip()
+    low = s.lower()
+    if low == "true":
+        return True
+    if low == "false":
+        return False
+    if low == "null":
+        return None
+    try:
+        if any(ch in s for ch in [".", "e", "E"]):
+            return float(s)
+        return int(s)
+    except ValueError:
+        return s
+
+
+def parse_kv(item: str) -> (str, Any):
+    if "=" not in item:
+        raise TunerError(f"Expected key=value, got: {item}")
+    key, value = item.split("=", 1)
+    key = key.strip()
+    if not key:
+        raise TunerError(f"Empty key in: {item}")
+    return key, parse_scalar(value)
+
+
+def target_sections(doc: Dict[str, Any], cav: int | None, all_cavs: bool) -> List[str]:
+    if all_cavs:
+        return [s for s in CAV_SECTIONS if isinstance(doc.get(s), dict)]
+    if cav is None:
+        raise TunerError("Specify --cav N or --all-cavs")
+    return [cav_section(cav)]
+
+
+def show_values(doc: Dict[str, Any], sections: List[str], keys: List[str] | None) -> None:
+    for sec in sections:
+        params = ensure_ros_params(doc, sec)
+        print(f"[{sec}]")
+        if keys:
+            for k in keys:
+                print(f"  {k}: {params.get(k, '<unset>')}")
+        else:
+            for k in sorted(params.keys()):
+                print(f"  {k}: {params[k]}")
+
+
+def write_changes(path: Path, doc: Dict[str, Any], dry_run: bool, make_backup: bool) -> None:
+    if dry_run:
+        print("[dry-run] no file written")
+        return
+    if make_backup and path.exists():
+        bak = backup_path(path)
+        save_yaml(bak, load_yaml(path))
+        print(f"backup: {bak}")
+    save_yaml(path, doc)
+    print(f"saved: {path}")
+
+
+def cmd_show(args: argparse.Namespace) -> int:
+    path = Path(args.config)
+    doc = load_yaml(path)
+    sections = target_sections(doc, args.cav, args.all_cavs)
+    show_values(doc, sections, args.key)
+    return 0
+
+
+def cmd_set(args: argparse.Namespace) -> int:
+    path = Path(args.config)
+    doc = load_yaml(path)
+    sections = target_sections(doc, args.cav, args.all_cavs)
+    value = parse_scalar(args.value)
+
+    for sec in sections:
+        params = ensure_ros_params(doc, sec)
+        old = params.get(args.key, "<unset>")
+        params[args.key] = value
+        print(f"{sec}: {args.key}: {old} -> {value}")
+
+    write_changes(path, doc, args.dry_run, not args.no_backup)
+    return 0
+
+
+def cmd_set_many(args: argparse.Namespace) -> int:
+    path = Path(args.config)
+    doc = load_yaml(path)
+    sections = target_sections(doc, args.cav, args.all_cavs)
+    kvs = [parse_kv(s) for s in args.set]
+
+    for sec in sections:
+        params = ensure_ros_params(doc, sec)
+        for key, value in kvs:
+            old = params.get(key, "<unset>")
+            params[key] = value
+            print(f"{sec}: {key}: {old} -> {value}")
+
+    write_changes(path, doc, args.dry_run, not args.no_backup)
+    return 0
+
+
+def cmd_apply_profile(args: argparse.Namespace) -> int:
+    path = Path(args.config)
+    doc = load_yaml(path)
+    if args.name not in PROFILES:
+        raise TunerError(
+            f"Unknown profile: {args.name}. Available: {', '.join(sorted(PROFILES.keys()))}"
         )
-        self.base_config = self.load_config()
+    sections = target_sections(doc, args.cav, args.all_cavs)
+    updates = PROFILES[args.name]
 
-        # Parameter grid
-        self.param_grid = {
-            'Q_pos': [50, 100, 143.6, 200],
-            'Q_heading': [50, 100, 139.4, 200],
-            'R_v': [0.3, 0.5, 0.8],
-            'R_w': [1.5, 2.9, 4.0],
-            'horizon': [100, 150, 200, 250]
-        }
+    for sec in sections:
+        params = ensure_ros_params(doc, sec)
+        for key, value in updates.items():
+            old = params.get(key, "<unset>")
+            params[key] = value
+            print(f"{sec}: {key}: {old} -> {value}")
 
-        self.results = []
-
-    def load_config(self):
-        with open(self.config_path, 'r') as f:
-            return yaml.safe_load(f)
-
-    def save_config(self, config):
-        with open(self.config_path, 'w') as f:
-            yaml.dump(config, f, default_flow_style=False)
-
-    def update_params(self, Q_pos, Q_heading, R_v, R_w, horizon):
-        config = self.base_config.copy()
-
-        # Update Slot 01 (CAV 1)
-        config['mpc_tracker_cav01']['ros__parameters']['Q_pos'] = float(Q_pos)
-        config['mpc_tracker_cav01']['ros__parameters']['Q_heading'] = float(Q_heading)
-        config['mpc_tracker_cav01']['ros__parameters']['R_v'] = float(R_v)
-        config['mpc_tracker_cav01']['ros__parameters']['R_w'] = float(R_w)
-        config['mpc_tracker_cav01']['ros__parameters']['horizon'] = int(horizon)
-
-        self.save_config(config)
-        print(f"Updated config: Q_pos={Q_pos}, Q_heading={Q_heading}, "
-              f"R_v={R_v}, R_w={R_w}, horizon={horizon}")
-
-    def run_simulation(self, duration=60):
-        """Run simulation and collect bag"""
-        print(f"Running simulation for {duration}s...")
-
-        # Start launch file
-        launch_cmd = [
-            'bash', '-c',
-            'source /opt/ros/foxy/setup.bash && '
-            'cd ~/Mobility_Challenge_Simulator && '
-            'source install/setup.bash && '
-            'ros2 launch bisa problem3_cpp_launch.py'
-        ]
-
-        proc = subprocess.Popen(launch_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-
-        time.sleep(10)  # Wait for startup
-
-        # Record bag
-        bag_dir = f'/tmp/mpc_tuning_{int(time.time())}'
-        bag_cmd = [
-            'bash', '-c',
-            f'source /opt/ros/foxy/setup.bash && '
-            f'ros2 bag record -d {duration} -o {bag_dir} '
-            f'/CAV_01 /local_path_cav01 /mpc_performance'
-        ]
-
-        bag_proc = subprocess.Popen(bag_cmd)
-        bag_proc.wait()
-
-        # Kill launch
-        proc.terminate()
-        proc.wait(timeout=5)
-
-        return bag_dir
-
-    def analyze_bag(self, bag_dir):
-        """Analyze bag and extract metrics"""
-        # Placeholder: In real implementation, use rosbag2 API
-
-        import random
-        metrics = {
-            'mean_lateral_error': random.uniform(0.05, 0.30),
-            'max_lateral_error': random.uniform(0.20, 0.80),
-            'mean_velocity': random.uniform(0.8, 1.2),
-            'velocity_variance': random.uniform(0.01, 0.10),
-            'mean_compute_time': random.uniform(300, 800),
-            'p99_compute_time': random.uniform(600, 1200),
-        }
-
-        return metrics
-
-    def run_tuning(self, max_iterations=None):
-        """Run parameter sweep"""
-
-        # Generate combinations
-        keys = list(self.param_grid.keys())
-        values = list(self.param_grid.values())
-        combinations = list(product(*values))
-
-        if max_iterations:
-            combinations = combinations[:max_iterations]
-
-        print(f"\n{'='*60}")
-        print("MPC PARAMETER TUNING")
-        print(f"Total combinations: {len(combinations)}")
-        print(f"{'='*60}\n")
-
-        for i, combo in enumerate(combinations, 1):
-            params = dict(zip(keys, combo))
-
-            print(f"\n[{i}/{len(combinations)}] Testing: {params}")
-
-            # Update config
-            self.update_params(**params)
-
-            # Run simulation
-            bag_dir = self.run_simulation(duration=30)
-
-            # Analyze
-            metrics = self.analyze_bag(bag_dir)
-
-            # Store results
-            result = {**params, **metrics, 'bag_dir': bag_dir}
-            self.results.append(result)
-
-            print(f"  Mean Error: {metrics['mean_lateral_error']:.4f}m")
-            print(f"  Max Error: {metrics['max_lateral_error']:.4f}m")
-            print(f"  Compute Time: {metrics['mean_compute_time']:.1f}us")
-
-            # Cleanup
-            subprocess.run(['rm', '-rf', bag_dir], check=False)
-
-        # Save results
-        self.save_results()
-
-        # Find best
-        self.find_best()
-
-    def save_results(self):
-        """Save results to CSV"""
-        df = pd.DataFrame(self.results)
-
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        csv_path = os.path.expanduser(
-            f'~/Mobility_Challenge_Simulator/logs/mpc_tuning_{timestamp}.csv'
-        )
-
-        os.makedirs(os.path.dirname(csv_path), exist_ok=True)
-        df.to_csv(csv_path, index=False)
-
-        print(f"\nSaved results to: {csv_path}")
-
-    def find_best(self):
-        """Find and display best parameters"""
-        df = pd.DataFrame(self.results)
-
-        # Multi-objective: minimize error and compute time
-        df['score'] = (
-            df['mean_lateral_error'] / df['mean_lateral_error'].max() * 0.5 +
-            df['max_lateral_error'] / df['max_lateral_error'].max() * 0.3 +
-            df['mean_compute_time'] / df['mean_compute_time'].max() * 0.2
-        )
-
-        df_sorted = df.sort_values('score')
-
-        print("\n" + "=" * 60)
-        print("TOP 5 PARAMETER SETS")
-        print("=" * 60)
-
-        for i, row in df_sorted.head(5).iterrows():
-            print(f"\n#{i+1}:")
-            print(f"  Q_pos: {row['Q_pos']}")
-            print(f"  Q_heading: {row['Q_heading']}")
-            print(f"  R_v: {row['R_v']}")
-            print(f"  R_w: {row['R_w']}")
-            print(f"  horizon: {int(row['horizon'])}")
-            print(f"  Mean Error: {row['mean_lateral_error']:.4f}m")
-            print(f"  Max Error: {row['max_lateral_error']:.4f}m")
-            print(f"  Compute: {row['mean_compute_time']:.1f}us")
-            print(f"  Score: {row['score']:.4f}")
-
-        print("\n" + "=" * 60)
-
-        # Save best config
-        best = df_sorted.iloc[0]
-        best_config = {
-            'Q_pos': float(best['Q_pos']),
-            'Q_heading': float(best['Q_heading']),
-            'R_v': float(best['R_v']),
-            'R_w': float(best['R_w']),
-            'horizon': int(best['horizon'])
-        }
-
-        yaml_path = os.path.expanduser(
-            '~/Mobility_Challenge_Simulator/src/bisa/config/cav_config_optimized.yaml'
-        )
-
-        with open(yaml_path, 'w') as f:
-            yaml.dump({'mpc_tracker_cav01': {'ros__parameters': best_config}}, f)
-
-        print(f"\nSaved best config to: {yaml_path}\n")
+    write_changes(path, doc, args.dry_run, not args.no_backup)
+    return 0
 
 
-def main():
-    tuner = MPCParameterTuner()
+def cmd_profiles(_: argparse.Namespace) -> int:
+    for name, kv in sorted(PROFILES.items()):
+        print(f"[{name}]")
+        for k, v in kv.items():
+            print(f"  {k}: {v}")
+    return 0
 
-    # Run limited sweep (full would take hours)
-    tuner.run_tuning(max_iterations=10)
+
+def cmd_save_best(args: argparse.Namespace) -> int:
+    src = Path(args.source)
+    out = Path(args.out)
+    doc = load_yaml(src)
+    save_yaml(out, copy.deepcopy(doc))
+    print(f"saved best snapshot: {out}")
+    return 0
 
 
-if __name__ == '__main__':
-    main()
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description="MPC YAML parameter tuner")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    def add_common(sp: argparse.ArgumentParser, *, for_show: bool = False) -> None:
+        sp.add_argument("--config", default=str(DEFAULT_CONFIG), help="target cav_config yaml")
+        sp.add_argument("--cav", type=int, help="single cav id (e.g. 1)")
+        sp.add_argument("--all-cavs", action="store_true", help="apply/show to all cav sections")
+        if not for_show:
+            sp.add_argument("--dry-run", action="store_true", help="print only, do not write")
+            sp.add_argument("--no-backup", action="store_true", help="skip .bak creation")
+
+    sp = sub.add_parser("show", help="show parameter values")
+    add_common(sp, for_show=True)
+    sp.add_argument("--key", action="append", help="specific key(s) to display")
+    sp.set_defaults(func=cmd_show)
+
+    sp = sub.add_parser("set", help="set one key/value")
+    add_common(sp)
+    sp.add_argument("--key", required=True)
+    sp.add_argument("--value", required=True)
+    sp.set_defaults(func=cmd_set)
+
+    sp = sub.add_parser("set-many", help="set multiple key=value pairs")
+    add_common(sp)
+    sp.add_argument("--set", action="append", required=True, help="key=value (repeatable)")
+    sp.set_defaults(func=cmd_set_many)
+
+    sp = sub.add_parser("profiles", help="list built-in profiles")
+    sp.set_defaults(func=cmd_profiles)
+
+    sp = sub.add_parser("apply-profile", help="apply a built-in profile")
+    add_common(sp)
+    sp.add_argument("--name", required=True, help=f"one of: {', '.join(sorted(PROFILES.keys()))}")
+    sp.set_defaults(func=cmd_apply_profile)
+
+    sp = sub.add_parser("save-best", help="copy current config to best snapshot file")
+    sp.add_argument("--source", default=str(DEFAULT_CONFIG))
+    sp.add_argument("--out", default=str(DEFAULT_BEST))
+    sp.set_defaults(func=cmd_save_best)
+
+    return p
+
+
+def main() -> int:
+    parser = build_parser()
+    args = parser.parse_args()
+    try:
+        return args.func(args)
+    except TunerError as e:
+        print(f"error: {e}")
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

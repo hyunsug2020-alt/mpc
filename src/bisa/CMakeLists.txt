@@ -126,50 +126,6 @@ target_include_directories(priority_collision_gate PUBLIC
 )
 
 
-# ================================================================
-# Optional nodes (guarded): collision_avoidance_node_cpp, synchronized_start_node
-# Some branches / tasks may not include these sources. Guard to avoid build failures.
-# ================================================================
-if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src/collision_avoidance_node.cpp)
-  add_executable(collision_avoidance_node_cpp
-    src/collision_avoidance_node.cpp
-  )
-  ament_target_dependencies(collision_avoidance_node_cpp
-    rclcpp std_msgs geometry_msgs nav_msgs
-  )
-  target_link_libraries(collision_avoidance_node_cpp mpc_controller_cpp)
-  target_include_directories(collision_avoidance_node_cpp PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>
-    /usr/include/eigen3
-  )
-  if(TARGET ${PROJECT_NAME})
-    rosidl_target_interfaces(collision_avoidance_node_cpp
-      ${PROJECT_NAME} "rosidl_typesupport_cpp")
-  endif()
-else()
-  message(WARNING "src/collision_avoidance_node.cpp not found: skipping collision_avoidance_node_cpp target")
-endif()
-
-if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src/synchronized_start_node.cpp)
-  add_executable(synchronized_start_node
-    src/synchronized_start_node.cpp
-  )
-  ament_target_dependencies(synchronized_start_node
-    rclcpp std_msgs
-  )
-  target_include_directories(synchronized_start_node PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>
-  )
-  if(TARGET ${PROJECT_NAME})
-    rosidl_target_interfaces(synchronized_start_node
-      ${PROJECT_NAME} "rosidl_typesupport_cpp")
-  endif()
-else()
-  message(WARNING "src/synchronized_start_node.cpp not found: skipping synchronized_start_node target")
-endif()
-
 # 메시지 의존성 설정
 if(TARGET ${PROJECT_NAME})
   rosidl_target_interfaces(local_path_pub_cpp
@@ -190,6 +146,7 @@ install(PROGRAMS
   scripts/mgeo_class_defs.py
   scripts/hdmap_generator.py
   scripts/mpc_dashboard.py
+  scripts/mpc_parameter_tuner.py
   scripts/analyze_mpc_performance.py
   DESTINATION lib/${PROJECT_NAME}
 )
@@ -201,14 +158,6 @@ install(TARGETS
   priority_collision_gate
   DESTINATION lib/${PROJECT_NAME}
 )
-
-# Optional installs
-if(TARGET collision_avoidance_node_cpp)
-  install(TARGETS collision_avoidance_node_cpp DESTINATION lib/${PROJECT_NAME})
-endif()
-if(TARGET synchronized_start_node)
-  install(TARGETS synchronized_start_node DESTINATION lib/${PROJECT_NAME})
-endif()
 
 # C++ 라이브러리 설치
 install(TARGETS
