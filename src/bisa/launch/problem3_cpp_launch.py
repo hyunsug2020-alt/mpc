@@ -3,6 +3,7 @@
 
 import os, yaml
 from launch import LaunchDescription
+from launch.actions import ExecuteProcess
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 
@@ -43,6 +44,21 @@ def generate_launch_description():
     hv_settings = full_config.get("hv_settings", [])
     
     nodes = []
+
+    # ---------------------------------------------------------
+    # [추가됨] MPC 파라미터 튜너 GUI 자동 실행
+    # ---------------------------------------------------------
+    tuner_script = os.path.expanduser("~/Mobility_Challenge_Simulator/src/bisa/scripts/mpc_parameter_tuner.py")
+    nodes.append(
+        ExecuteProcess(
+            cmd=["python3", tuner_script, "gui"],
+            output="screen",
+            additional_env={
+                "DISPLAY": os.environ.get("DISPLAY", ":0"),
+                "XAUTHORITY": os.environ.get("XAUTHORITY", os.path.expanduser("~/.Xauthority")),
+            },
+        )
+    )
 
     # ---------------------------------------------------------
     # [추가됨] RViz2 실행 노드
