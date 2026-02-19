@@ -91,6 +91,10 @@ MPCPathTrackerCpp::MPCPathTrackerCpp()
     this->declare_parameter("fallback_blend", 0.85);
     this->declare_parameter("kappa_limit_ref_velocity", -1.0);
     this->declare_parameter("path_reset_distance_threshold", 1.0);
+    this->declare_parameter("path_hold_distance_gain", 0.8);
+    this->declare_parameter("path_hold_heading_gain", 0.7);
+    this->declare_parameter("path_hold_max_omega", 1.1);
+    this->declare_parameter("path_hold_lookahead_index", 10);
     path_reset_distance_threshold_ =
         std::max(0.1, this->get_parameter("path_reset_distance_threshold").as_double());
     
@@ -221,6 +225,14 @@ void MPCPathTrackerCpp::update_controller_params() {
     max_v_rate_ = std::max(0.1, this->get_parameter("max_v_rate").as_double());
     path_reset_distance_threshold_ =
         std::max(0.1, this->get_parameter("path_reset_distance_threshold").as_double());
+    path_hold_distance_gain_ =
+        std::max(0.0, this->get_parameter("path_hold_distance_gain").as_double());
+    path_hold_heading_gain_ =
+        std::max(0.0, this->get_parameter("path_hold_heading_gain").as_double());
+    path_hold_max_omega_ =
+        std::max(0.1, this->get_parameter("path_hold_max_omega").as_double());
+    path_hold_lookahead_index_ =
+        std::max(1, static_cast<int>(this->get_parameter("path_hold_lookahead_index").as_int()));
     effective_horizon_ = std::max(1, cfg.N);
 
     ltv_controller_->setConfig(cfg);
@@ -350,6 +362,23 @@ void MPCPathTrackerCpp::control_loop() {
     const double total_time_us = std::chrono::duration_cast<std::chrono::microseconds>(
         end_total - start_total).count();
 
+    // Compute nearest distance from ego to local path for path-hold correction.
+    double min_path_dist = std::numeric_limits<double>::max();
+    size_t closest_idx = 0;
+    if (current_pose_ && !local_path_.empty()) {
+        const double ex = current_pose_->position.x;
+        const double ey = current_pose_->position.y;
+        for (size_t i = 0; i < local_path_.size(); ++i) {
+            const double dx = local_path_[i].pose.position.x - ex;
+            const double dy = local_path_[i].pose.position.y - ey;
+            const double d = std::hypot(dx, dy);
+            if (d < min_path_dist) {
+                min_path_dist = d;
+                closest_idx = i;
+            }
+        }
+    }
+
     // Path-guided steering assist: derive yaw-rate from lookahead geometry and blend with MPC.
     const bool enable_path_fallback = this->get_parameter("enable_path_fallback").as_bool();
     if (enable_path_fallback && current_pose_ && !local_path_.empty()) {
@@ -378,6 +407,32 @@ void MPCPathTrackerCpp::control_loop() {
                 }
             }
         }
+    }
+
+    // Always-on path-hold assist: keep the vehicle close to local_path to prevent drift/spin.
+    if (current_pose_ && !local_path_.empty() && std::isfinite(min_path_dist)) {
+        const size_t tgt_idx = std::min(
+            closest_idx + static_cast<size_t>(path_hold_lookahead_index_),
+            local_path_.size() - 1);
+        const auto &p = local_path_[tgt_idx].pose.position;
+        const double dx = p.x - current_pose_->position.x;
+        const double dy = p.y - current_pose_->position.y;
+        const double ld = std::hypot(dx, dy);
+        const double yaw = pose_yaw_from_quat_or_packed(*current_pose_);
+        const double target_heading = std::atan2(dy, dx);
+        const double alpha = wrap_angle(target_heading - yaw);
+        const double dist_scale = 1.0 / (1.0 + path_hold_distance_gain_ * min_path_dist);
+        v_cmd *= std::clamp(dist_scale, 0.2, 1.0);
+
+        double w_hold = 0.0;
+        if (ld > 1e-3) {
+            w_hold = 2.0 * std::max(0.2, std::abs(v_cmd)) * std::sin(alpha) / ld;
+        }
+        // Blend MPC yaw-rate with path-hold corrective yaw-rate.
+        const double blend = std::clamp(
+            path_hold_heading_gain_ * (0.3 + std::min(min_path_dist, 2.0) / 2.0), 0.0, 0.9);
+        w_cmd = (1.0 - blend) * w_cmd + blend * w_hold;
+        w_cmd = std::clamp(w_cmd, -path_hold_max_omega_, path_hold_max_omega_);
     }
 
     // 제어 출력 제한: 크기 포화 + 레이트 제한(지연/급변 완화)

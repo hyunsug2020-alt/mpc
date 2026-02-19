@@ -65,6 +65,10 @@ private:
     double local_path_anchor_x_ = 0.0;
     double local_path_anchor_y_ = 0.0;
     double path_reset_distance_threshold_ = 1.0;
+    double path_hold_distance_gain_ = 0.8;
+    double path_hold_heading_gain_ = 0.7;
+    double path_hold_max_omega_ = 1.1;
+    int path_hold_lookahead_index_ = 10;
     
     // CAV ID
     int target_cav_id_;
