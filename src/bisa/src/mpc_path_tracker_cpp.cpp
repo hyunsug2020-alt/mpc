@@ -95,6 +95,10 @@ MPCPathTrackerCpp::MPCPathTrackerCpp()
     this->declare_parameter("path_hold_heading_gain", 0.7);
     this->declare_parameter("path_hold_max_omega", 1.1);
     this->declare_parameter("path_hold_lookahead_index", 10);
+    this->declare_parameter("path_hold_recovery_distance", 0.45);
+    this->declare_parameter("path_hold_heading_error_gain", 1.4);
+    this->declare_parameter("path_hold_cross_track_gain", 1.1);
+    this->declare_parameter("path_hold_recovery_blend", 0.75);
     path_reset_distance_threshold_ =
         std::max(0.1, this->get_parameter("path_reset_distance_threshold").as_double());
     
@@ -233,6 +237,14 @@ void MPCPathTrackerCpp::update_controller_params() {
         std::max(0.1, this->get_parameter("path_hold_max_omega").as_double());
     path_hold_lookahead_index_ =
         std::max(1, static_cast<int>(this->get_parameter("path_hold_lookahead_index").as_int()));
+    path_hold_recovery_distance_ =
+        std::max(0.1, this->get_parameter("path_hold_recovery_distance").as_double());
+    path_hold_heading_error_gain_ =
+        std::max(0.0, this->get_parameter("path_hold_heading_error_gain").as_double());
+    path_hold_cross_track_gain_ =
+        std::max(0.0, this->get_parameter("path_hold_cross_track_gain").as_double());
+    path_hold_recovery_blend_ =
+        std::clamp(this->get_parameter("path_hold_recovery_blend").as_double(), 0.0, 1.0);
     effective_horizon_ = std::max(1, cfg.N);
 
     ltv_controller_->setConfig(cfg);
@@ -409,28 +421,48 @@ void MPCPathTrackerCpp::control_loop() {
         }
     }
 
-    // Always-on path-hold assist: keep the vehicle close to local_path to prevent drift/spin.
+    // Always-on path-hold assist:
+    // 1) recover cross-track error quickly when outside path corridor
+    // 2) align heading to path tangent immediately after re-entry
     if (current_pose_ && !local_path_.empty() && std::isfinite(min_path_dist)) {
-        const size_t tgt_idx = std::min(
-            closest_idx + static_cast<size_t>(path_hold_lookahead_index_),
-            local_path_.size() - 1);
+        const size_t recovery_lookahead = 3;
+        const size_t lookahead =
+            (min_path_dist > path_hold_recovery_distance_) ? recovery_lookahead
+                                                           : static_cast<size_t>(path_hold_lookahead_index_);
+        const size_t tgt_idx = std::min(closest_idx + lookahead, local_path_.size() - 1);
         const auto &p = local_path_[tgt_idx].pose.position;
+        const auto &p0 = local_path_[closest_idx].pose.position;
+        const auto &p1 = local_path_[std::min(closest_idx + static_cast<size_t>(1), local_path_.size() - 1)].pose.position;
         const double dx = p.x - current_pose_->position.x;
         const double dy = p.y - current_pose_->position.y;
         const double ld = std::hypot(dx, dy);
         const double yaw = pose_yaw_from_quat_or_packed(*current_pose_);
+        const double path_yaw = std::atan2(p1.y - p0.y, p1.x - p0.x);
         const double target_heading = std::atan2(dy, dx);
         const double alpha = wrap_angle(target_heading - yaw);
+        const double heading_error = wrap_angle(path_yaw - yaw);
+        const double rx = current_pose_->position.x - p0.x;
+        const double ry = current_pose_->position.y - p0.y;
+        const double cross_track_error = -std::sin(path_yaw) * rx + std::cos(path_yaw) * ry;
         const double dist_scale = 1.0 / (1.0 + path_hold_distance_gain_ * min_path_dist);
         v_cmd *= std::clamp(dist_scale, 0.2, 1.0);
 
-        double w_hold = 0.0;
+        double w_geo = 0.0;
         if (ld > 1e-3) {
-            w_hold = 2.0 * std::max(0.2, std::abs(v_cmd)) * std::sin(alpha) / ld;
+            w_geo = 2.0 * std::max(0.2, std::abs(v_cmd)) * std::sin(alpha) / ld;
         }
+        const double w_heading = path_hold_heading_error_gain_ * heading_error;
+        const double w_cte = -path_hold_cross_track_gain_ * cross_track_error *
+                             std::max(0.3, std::abs(v_cmd));
+        const double w_hold = w_geo + w_heading + w_cte;
+
         // Blend MPC yaw-rate with path-hold corrective yaw-rate.
-        const double blend = std::clamp(
+        const double base_blend = std::clamp(
             path_hold_heading_gain_ * (0.3 + std::min(min_path_dist, 2.0) / 2.0), 0.0, 0.9);
+        const double recovery_scale = std::clamp(
+            min_path_dist / std::max(path_hold_recovery_distance_, 1e-3), 0.0, 1.0);
+        const double blend =
+            std::clamp(base_blend + path_hold_recovery_blend_ * recovery_scale, 0.0, 0.95);
         w_cmd = (1.0 - blend) * w_cmd + blend * w_hold;
         w_cmd = std::clamp(w_cmd, -path_hold_max_omega_, path_hold_max_omega_);
     }
@@ -446,10 +478,12 @@ void MPCPathTrackerCpp::control_loop() {
     }
 
     w_cmd = std::clamp(w_cmd, -max_omega_abs_, max_omega_abs_);
-    const double max_dw = max_omega_rate_ * dt;
+    const double recovery_boost =
+        (std::isfinite(min_path_dist) && min_path_dist > path_hold_recovery_distance_) ? 1.6 : 1.0;
+    const double max_dw = max_omega_rate_ * recovery_boost * dt;
     w_cmd = std::clamp(w_cmd, prev_w_cmd_ - max_dw, prev_w_cmd_ + max_dw);
 
-    const double max_dv = max_v_rate_ * dt;
+    const double max_dv = max_v_rate_ * (1.0 + 0.4 * (recovery_boost - 1.0)) * dt;
     v_cmd = std::clamp(v_cmd, prev_v_cmd_ - max_dv, prev_v_cmd_ + max_dv);
 
     prev_v_cmd_ = v_cmd;

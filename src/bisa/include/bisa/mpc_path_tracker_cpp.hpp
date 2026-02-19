@@ -69,6 +69,10 @@ private:
     double path_hold_heading_gain_ = 0.7;
     double path_hold_max_omega_ = 1.1;
     int path_hold_lookahead_index_ = 10;
+    double path_hold_recovery_distance_ = 0.45;
+    double path_hold_heading_error_gain_ = 1.4;
+    double path_hold_cross_track_gain_ = 1.1;
+    double path_hold_recovery_blend_ = 0.75;
     
     // CAV ID
     int target_cav_id_;

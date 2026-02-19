@@ -17,22 +17,30 @@ mpc_tracker_cav01:
   ros__parameters:
     time_step: 0.05
     Q_pos: 100.0
-    Q_heading: 98.0
+    Q_heading: 96.0
     weight_curvature: 2.0
-    weight_input: 0.46
-    max_velocity: 0.45
+    weight_input: 0.64
+    max_velocity: 0.43
     max_accel: 1.5
     max_angular_vel: 1.6
     kappa_limit_ref_velocity: 0.35
-    max_omega_abs: 1.55
-    max_omega_rate: 18.5
-    max_v_rate: 2.0
-    ref_preview_steps: 13
+    max_omega_abs: 1.25
+    max_omega_rate: 16.0
+    max_v_rate: 2.4
+    ref_preview_steps: 15
     enable_path_fallback: true
     fallback_min_abs_omega: 0.05
-    fallback_lookahead_index: 12
-    fallback_max_abs_omega: 0.85
-    fallback_blend: 0.03
+    fallback_lookahead_index: 14
+    fallback_max_abs_omega: 0.68
+    fallback_blend: 0.04
+    path_hold_distance_gain: 0.28
+    path_hold_heading_gain: 0.27
+    path_hold_max_omega: 0.62
+    path_hold_lookahead_index: 14
+    path_hold_recovery_distance: 0.40
+    path_hold_heading_error_gain: 1.60
+    path_hold_cross_track_gain: 1.20
+    path_hold_recovery_blend: 0.82
     horizon: 60
 mpc_tracker_cav02:
   ros__parameters:
