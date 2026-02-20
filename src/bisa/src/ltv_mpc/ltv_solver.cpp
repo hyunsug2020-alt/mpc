@@ -79,15 +79,20 @@ bool LTVSolver::solve(const Eigen::SparseMatrix<double>& P, const Eigen::VectorX
 
   osqp_solve(work);
   const c_int status = work->info->status_val;
-  const bool ok = (status == OSQP_SOLVED || status == OSQP_SOLVED_INACCURATE);
 
-  if (ok) {
+  // OSQP_MAX_ITER_REACHED(-2): 반복 한계 도달했지만 부분 해 사용 가능
+  // → SOLVED_INACCURATE와 동일하게 허용해서 FAILED 방지
+  const bool ok = (status == OSQP_SOLVED ||
+                   status == OSQP_SOLVED_INACCURATE ||
+                   status == OSQP_MAX_ITER_REACHED);
+
+  if (ok && work->solution != nullptr) {
     solution = Eigen::VectorXd::Zero(n);
     for (c_int i = 0; i < n; ++i) solution(i) = work->solution->x[i];
   }
 
   osqp_cleanup(work);
-  return ok;
+  return ok && !solution.hasNaN();
 }
 
 }  // namespace bisa

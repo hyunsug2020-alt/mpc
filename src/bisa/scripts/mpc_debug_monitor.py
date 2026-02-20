@@ -76,6 +76,7 @@ BG = {
     "LOCAL_PATH_TOO_SHORT": "#2a1800",
     "NO_DATA":              "#2a0808",
     "FAILED":               "#3a0000",
+    "MAX_ITER":             "#1a1000",   # dark orange (partial)
     "UNKNOWN":              "#181018",
 }
 FG = {
@@ -84,9 +85,10 @@ FG = {
     "LOCAL_PATH_TOO_SHORT": "#ffbb00",
     "NO_DATA":              "#ff5555",
     "FAILED":               "#ff2222",
+    "MAX_ITER":             "#ff8800",   # orange
     "UNKNOWN":              "#cc88ff",
 }
-ANOMALY = {"FAILED", "NO_DATA", "LOCAL_PATH_TOO_SHORT"}
+ANOMALY = {"FAILED", "NO_DATA", "LOCAL_PATH_TOO_SHORT", "MAX_ITER"}
 FREEZE_THRESH_S  = 0.8   # v < 0.005 m/s 이 시간 이상 → 정지 이벤트
 FREEZE_V_THRESH  = 0.005 # m/s
 DEVIATION_W_THRESH  = 0.80  # |w_cmd| 이 값 초과 시 이탈 경고 (rad/s)

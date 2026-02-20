@@ -73,7 +73,7 @@ mpc_tracker_cav01:
     off_path_recovery_heading_gain: 3.2
     off_path_recovery_cte_gain: 2.4
     off_path_recovery_max_omega: 1.8
-    horizon: 40
+    horizon: 50
 mpc_tracker_cav02:
   ros__parameters:
     time_step: 0.05
