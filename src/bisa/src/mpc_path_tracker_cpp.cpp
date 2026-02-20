@@ -18,8 +18,26 @@ double wrap_angle(double a) {
 double pose_yaw_from_quat_or_packed(const geometry_msgs::msg::Pose& pose) {
     const auto& q = pose.orientation;
     const double n = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
-    if (!std::isfinite(n) || std::abs(n - 1.0) > 0.15) {
-        return wrap_angle(q.z);
+    const bool quat_component_range_ok =
+        std::isfinite(q.x) && std::isfinite(q.y) && std::isfinite(q.z) && std::isfinite(q.w) &&
+        std::abs(q.x) <= 1.0 + 1e-3 && std::abs(q.y) <= 1.0 + 1e-3 &&
+        std::abs(q.z) <= 1.0 + 1e-3 && std::abs(q.w) <= 1.0 + 1e-3;
+    const bool use_quaternion = quat_component_range_ok && std::isfinite(n) && std::abs(n - 1.0) <= 0.05;
+    if (!use_quaternion) {
+        // Fallback for packed-yaw pose conventions:
+        // - radians in z
+        // - degrees in z
+        // - [0, 2pi] wrapped radians in z
+        double yaw = q.z;
+        if (!std::isfinite(yaw)) return 0.0;
+        if (std::abs(yaw) > 2.0 * M_PI + 0.5) {
+            yaw = yaw * M_PI / 180.0;
+        } else if (yaw > M_PI && yaw <= 2.0 * M_PI + 0.5) {
+            yaw -= 2.0 * M_PI;
+        } else if (yaw < -M_PI && yaw >= -2.0 * M_PI - 0.5) {
+            yaw += 2.0 * M_PI;
+        }
+        return wrap_angle(yaw);
     }
     const double x = q.x / n;
     const double y = q.y / n;
@@ -451,16 +469,25 @@ void MPCPathTrackerCpp::control_loop() {
         if (ld > 1e-3) {
             w_geo = 2.0 * std::max(0.2, std::abs(v_cmd)) * std::sin(alpha) / ld;
         }
-        const double w_heading = path_hold_heading_error_gain_ * heading_error;
-        const double w_cte = -path_hold_cross_track_gain_ * cross_track_error *
-                             std::max(0.3, std::abs(v_cmd));
-        const double w_hold = w_geo + w_heading + w_cte;
+        double w_heading = path_hold_heading_error_gain_ * heading_error;
+        double w_cte = -path_hold_cross_track_gain_ * cross_track_error *
+                       std::max(0.3, std::abs(v_cmd));
+        // Prevent heading/CTE correction from overwhelming geometry guidance.
+        w_heading = std::clamp(w_heading, -path_hold_max_omega_, path_hold_max_omega_);
+        w_cte = std::clamp(w_cte, -path_hold_max_omega_, path_hold_max_omega_);
+        double w_aux = w_heading + w_cte;
+        if (std::abs(w_geo) > 1e-3 && (w_aux * w_geo) < 0.0) {
+            w_aux *= 0.3;
+        }
+        const double w_hold = w_geo + w_aux;
 
         // Blend MPC yaw-rate with path-hold corrective yaw-rate.
         const double base_blend = std::clamp(
             path_hold_heading_gain_ * (0.3 + std::min(min_path_dist, 2.0) / 2.0), 0.0, 0.9);
         const double recovery_scale = std::clamp(
-            min_path_dist / std::max(path_hold_recovery_distance_, 1e-3), 0.0, 1.0);
+            (min_path_dist - path_hold_recovery_distance_) /
+                std::max(path_hold_recovery_distance_, 1e-3),
+            0.0, 1.0);
         const double blend =
             std::clamp(base_blend + path_hold_recovery_blend_ * recovery_scale, 0.0, 0.95);
         w_cmd = (1.0 - blend) * w_cmd + blend * w_hold;
