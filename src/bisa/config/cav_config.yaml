@@ -18,12 +18,12 @@ mpc_tracker_cav01:
     time_step: 0.05
     Q_pos: 110.0
     Q_heading: 120.0
-    weight_curvature: 2.0
-    weight_input: 0.36
+    weight_curvature: 1.5
+    weight_input: 0.12
     max_velocity: 0.49
-    max_accel: 1.70
-    max_angular_vel: 2.00
-    kappa_limit_ref_velocity: 0.30
+    max_accel: 5.00
+    max_angular_vel: 1.80
+    kappa_limit_ref_velocity: 0.36
     max_omega_abs: 1.80
     max_omega_rate: 28.0
     max_v_rate: 2.2
