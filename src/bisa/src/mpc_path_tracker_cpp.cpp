@@ -104,6 +104,11 @@ MPCPathTrackerCpp::MPCPathTrackerCpp()
     this->declare_parameter("max_v_rate", 10.0);
     this->declare_parameter("sigmoid_tau_accel", 0.40);
     this->declare_parameter("sigmoid_tau_decel", 0.20);
+    // OSQP solver tuning (exposed so yaml can override)
+    this->declare_parameter("osqp_max_iter",  4000);
+    this->declare_parameter("osqp_eps_abs",   1e-4);
+    this->declare_parameter("osqp_eps_rel",   1e-4);
+    this->declare_parameter("osqp_polish",    false);
     this->declare_parameter("lateral_bound", -1.0);
     this->declare_parameter("w_lateral_slack_lin", 500.0);
     this->declare_parameter("w_lateral_slack_quad", 5000.0);
@@ -275,6 +280,11 @@ void MPCPathTrackerCpp::update_controller_params() {
         std::max(0.0, this->get_parameter("w_lateral_slack_lin").as_double());
     cfg.w_lateral_slack_quad =
         std::max(0.0, this->get_parameter("w_lateral_slack_quad").as_double());
+    // OSQP settings
+    cfg.osqp_max_iter  = static_cast<int>(std::max(100L, this->get_parameter("osqp_max_iter").as_int()));
+    cfg.osqp_eps_abs   = std::max(1e-7, this->get_parameter("osqp_eps_abs").as_double());
+    cfg.osqp_eps_rel   = std::max(1e-7, this->get_parameter("osqp_eps_rel").as_double());
+    cfg.osqp_polish    = this->get_parameter("osqp_polish").as_bool();
 
     max_omega_abs_ = std::max(0.1, this->get_parameter("max_omega_abs").as_double());
     max_omega_rate_ = std::max(0.1, this->get_parameter("max_omega_rate").as_double());

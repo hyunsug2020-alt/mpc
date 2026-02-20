@@ -89,7 +89,9 @@ FG = {
 ANOMALY = {"FAILED", "NO_DATA", "LOCAL_PATH_TOO_SHORT"}
 FREEZE_THRESH_S  = 0.8   # v < 0.005 m/s 이 시간 이상 → 정지 이벤트
 FREEZE_V_THRESH  = 0.005 # m/s
-DEVIATION_W_THRESH = 0.80 # |w_cmd| 이 값 초과 시 이탈 경고 (rad/s)
+DEVIATION_W_THRESH  = 0.80  # |w_cmd| 이 값 초과 시 이탈 경고 (rad/s)
+SOLVER_WARN_MS      = 30.0  # solver time 경고 임계 (ms)
+SOLVER_FAIL_MS      = 55.0  # solver time FAILED 예상 임계 (ms)
 
 
 # ── ROS2 노드 ────────────────────────────────────────────────────────────────
@@ -361,9 +363,17 @@ def build_graph(node: MonitorNode):
             sp.set_edgecolor("#222")
         if len(tw) > 1:
             bw = (tw[-1] - tw[0]) / max(1, len(tw)) * 0.85
-            bars = ax2.bar(tw, smw, width=bw, color="#6366f1", alpha=0.28, zorder=1)
+            # bar 색상: 초록<30ms, 노랑30-55ms, 빨강>55ms
+            bar_colors = ["#22c55e" if v < SOLVER_WARN_MS
+                          else "#f59e0b" if v < SOLVER_FAIL_MS
+                          else "#ef4444"
+                          for v in smw]
+            bars = ax2.bar(tw, smw, width=bw, color=bar_colors, alpha=0.50, zorder=1)
             _bars.extend(bars)
-        ax2.set_ylim(0, max(8.0, float(np.nanmax(smw)) * 1.5) if len(smw) else 8.0)
+        ms_max = max(80.0, float(np.nanmax(smw)) * 1.4) if len(smw) else 80.0
+        ax2.set_ylim(0, ms_max)
+        ax2.axhline(SOLVER_WARN_MS, color="#f59e0b", lw=0.8, ls="--", alpha=0.7)
+        ax2.axhline(SOLVER_FAIL_MS, color="#ef4444", lw=0.8, ls="--", alpha=0.7)
 
         # ── 주 라인 ──────────────────────────────────────────────────────
         line_v.set_data(tw, vw)
@@ -380,12 +390,18 @@ def build_graph(node: MonitorNode):
         v_now = float(vs[-1]) if len(vs) else 0.0
         w_now = float(abs(ws[-1])) if len(ws) else 0.0
         ps_ok = "OK" if last_ps >= 5 else f"!! {last_ps} pts"
+        # FAILED 카운트
+        fail_count = sum(1 for s in stw if s in ANOMALY)
+        fail_rate  = fail_count / max(1, len(stw)) * 100
+
         sbox.set_text(
             f" STATUS  : {last_st}\n"
             f" v_cmd   : {v_now:+.3f} m/s\n"
             f" |ω_cmd| : {w_now:.3f} rad/s\n"
-            f" solver  : {last_ms:.1f} ms\n"
-            f" path    : {last_ps}  [{ps_ok}]")
+            f" solver  : {last_ms:.1f} ms"
+            + (" ⚠" if last_ms > SOLVER_WARN_MS else "") + "\n"
+            f" path    : {last_ps}  [{ps_ok}]\n"
+            f" FAILED  : {fail_count}/{len(stw)} ({fail_rate:.0f}%)")
         sbox.set_color(col)
         sbox.get_bbox_patch().set_edgecolor(col)
 
