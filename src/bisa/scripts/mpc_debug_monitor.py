@@ -61,7 +61,7 @@ FILE_OUT        = "/tmp/mpc_debug_live.png"
 FILE_SAVE_S     = 2.0
 FREEZE_S        = 0.8
 FREEZE_V        = 0.005
-DEV_W           = 0.80
+DEV_W           = 1.10
 SOLVER_WARN     = 30.0
 SOLVER_CRIT     = 55.0
 
