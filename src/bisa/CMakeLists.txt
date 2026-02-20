@@ -147,6 +147,7 @@ install(PROGRAMS
   scripts/hdmap_generator.py
   scripts/mpc_parameter_tuner.py
   scripts/analyze_mpc_performance.py
+  scripts/mpc_debug_monitor.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

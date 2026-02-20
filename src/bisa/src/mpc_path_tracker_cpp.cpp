@@ -102,6 +102,8 @@ MPCPathTrackerCpp::MPCPathTrackerCpp()
     this->declare_parameter("max_omega_abs", 2.0);
     this->declare_parameter("max_omega_rate", 20.0);
     this->declare_parameter("max_v_rate", 10.0);
+    this->declare_parameter("sigmoid_tau_accel", 0.40);
+    this->declare_parameter("sigmoid_tau_decel", 0.20);
     this->declare_parameter("lateral_bound", -1.0);
     this->declare_parameter("w_lateral_slack_lin", 500.0);
     this->declare_parameter("w_lateral_slack_quad", 5000.0);
@@ -277,6 +279,8 @@ void MPCPathTrackerCpp::update_controller_params() {
     max_omega_abs_ = std::max(0.1, this->get_parameter("max_omega_abs").as_double());
     max_omega_rate_ = std::max(0.1, this->get_parameter("max_omega_rate").as_double());
     max_v_rate_ = std::max(0.1, this->get_parameter("max_v_rate").as_double());
+    sig_tau_up_   = std::max(0.01, this->get_parameter("sigmoid_tau_accel").as_double());
+    sig_tau_down_ = std::max(0.01, this->get_parameter("sigmoid_tau_decel").as_double());
     path_reset_distance_threshold_ =
         std::max(0.1, this->get_parameter("path_reset_distance_threshold").as_double());
     path_hold_distance_gain_ =
@@ -674,9 +678,17 @@ void MPCPathTrackerCpp::control_loop() {
     const double max_dw = max_omega_rate_ * recovery_boost * adaptive_rate_scale * dt;
     w_cmd = std::clamp(w_cmd, prev_w_cmd_ - max_dw, prev_w_cmd_ + max_dw);
 
-    const double max_dv = max_v_rate_ * (1.0 + 0.4 * (recovery_boost - 1.0)) * dt;
-    v_cmd = std::clamp(v_cmd, prev_v_cmd_ - max_dv, prev_v_cmd_ + max_dv);
-    v_cmd *= adaptive_v_scale;
+    // Sigmoid velocity smoother: 급출발/급정지 완화
+    // 가속 시 tau_up, 감속 시 tau_down의 지수 필터 → S자 속도 곡선
+    if (!cmd_initialized_) v_sig_state_ = v_cmd;
+    {
+        const double v_target  = v_cmd * adaptive_v_scale;
+        const double tau       = (v_target > v_sig_state_) ? sig_tau_up_ : sig_tau_down_;
+        const double alpha     = 1.0 - std::exp(-dt / std::max(tau, 1e-3));
+        v_sig_state_          += alpha * (v_target - v_sig_state_);
+        v_sig_state_           = std::max(0.0, v_sig_state_);
+        v_cmd                  = v_sig_state_;
+    }
 
     prev_v_cmd_ = v_cmd;
     prev_w_cmd_ = w_cmd;

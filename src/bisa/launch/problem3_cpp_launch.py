@@ -203,4 +203,18 @@ def generate_launch_description():
             )
         )
 
+    # ── MPC Debug Monitor (real-time single-panel diagnostic graph) ──────────
+    nodes.append(
+        Node(
+            package="bisa",
+            executable="mpc_debug_monitor.py",
+            name="mpc_debug_monitor",
+            output="screen",
+            additional_env={
+                "ROS_DOMAIN_ID": "1",     # CAV01 domain
+                "DISPLAY": os.environ.get("DISPLAY", ":1"),
+            },
+        )
+    )
+
     return LaunchDescription(nodes)

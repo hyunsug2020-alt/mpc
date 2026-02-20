@@ -60,6 +60,10 @@ private:
     double prev_w_cmd_ = 0.0;
     rclcpp::Time prev_cmd_time_;
     bool cmd_initialized_ = false;
+    // Sigmoid velocity smoother
+    double v_sig_state_  = 0.0;   // smoothed velocity state
+    double sig_tau_up_   = 0.40;  // acceleration time constant (s)
+    double sig_tau_down_ = 0.20;  // deceleration time constant (s)
     int effective_horizon_ = 20;
     bool has_local_path_anchor_ = false;
     double local_path_anchor_x_ = 0.0;
