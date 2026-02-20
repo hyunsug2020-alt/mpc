@@ -20,14 +20,14 @@ mpc_tracker_cav01:
     Q_heading: 120.0
     weight_curvature: 2.0
     weight_input: 0.36
-    max_velocity: 0.40
+    max_velocity: 0.38
     max_accel: 1.30
-    max_angular_vel: 1.40
-    kappa_limit_ref_velocity: 0.60
+    max_angular_vel: 1.65
+    kappa_limit_ref_velocity: 0.42
     max_omega_abs: 1.25
     max_omega_rate: 24.0
     max_v_rate: 1.6
-    ref_preview_steps: 24
+    ref_preview_steps: 20
     lateral_bound: 0.25
     w_lateral_slack_lin: 9000.0
     w_lateral_slack_quad: 90000.0
@@ -45,9 +45,9 @@ mpc_tracker_cav01:
     path_hold_cross_track_gain: 0.80
     path_hold_recovery_blend: 0.50
     curve_speed_enable: true
-    curve_speed_heading_threshold: 0.18
-    curve_speed_reduction_gain: 0.75
-    curve_speed_min_ratio: 0.45
+    curve_speed_heading_threshold: 0.13
+    curve_speed_reduction_gain: 0.90
+    curve_speed_min_ratio: 0.38
     overshoot_guard_distance: 0.13
     overshoot_reverse_damping: 0.52
     oscillation_guard_enable: true
@@ -61,9 +61,9 @@ mpc_tracker_cav01:
     adaptive_near_omega_rate_scale: 0.30
     adaptive_near_v_scale: 0.90
     off_path_recovery_enable: true
-    off_path_recovery_distance: 0.55
-    off_path_recovery_exit_distance: 0.22
-    off_path_recovery_speed: 0.12
+    off_path_recovery_distance: 0.38
+    off_path_recovery_exit_distance: 0.18
+    off_path_recovery_speed: 0.10
     off_path_recovery_heading_gain: 3.2
     off_path_recovery_cte_gain: 2.4
     off_path_recovery_max_omega: 1.8
