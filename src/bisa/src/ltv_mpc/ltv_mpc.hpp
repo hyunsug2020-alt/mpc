@@ -27,7 +27,26 @@ class LTVMPC {
 
  private:
   void buildInputConstraints(Eigen::SparseMatrix<double>& A, Eigen::VectorXd& l,
-                             Eigen::VectorXd& u) const;
+                             Eigen::VectorXd& u, int nvar) const;
+  void buildKappaConstraints(const Eigen::VectorXd& x0,
+                             const Eigen::VectorXd& z_bar,
+                             const Eigen::MatrixXd& A_bar,
+                             const Eigen::MatrixXd& B_bar,
+                             const Eigen::MatrixXd& E_bar,
+                             Eigen::SparseMatrix<double>& A,
+                             Eigen::VectorXd& l,
+                             Eigen::VectorXd& u,
+                             int nvar) const;
+  void buildLateralSlackConstraints(const Eigen::VectorXd& x0,
+                                    const Eigen::VectorXd& z_bar,
+                                    const Eigen::MatrixXd& A_bar,
+                                    const Eigen::MatrixXd& B_bar,
+                                    const Eigen::MatrixXd& E_bar,
+                                    const Eigen::MatrixXd& C_bar,
+                                    Eigen::SparseMatrix<double>& A,
+                                    Eigen::VectorXd& l,
+                                    Eigen::VectorXd& u,
+                                    int nvar) const;
 
   LTVMPCConfig cfg_;
   LTVModel model_;

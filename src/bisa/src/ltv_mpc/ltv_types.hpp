@@ -25,6 +25,15 @@ struct LTVMPCConfig {
   double kappa_max = 2.0;
   int ref_preview_steps = 0;
 
+  // Lateral deviation bound [m] from Gutjahr 2017 eq.(8).
+  // d_i,min <= d_i(k) <= d_i,max  (i=1,2,3: rear/mid/front axle)
+  // Set > 0 to enable. Negative = disabled (cost-only mode).
+  double lateral_bound = -1.0;
+  // Slack variable penalty weights (Gutjahr 2017 eq.21, k1/K2)
+  // Large values = strongly penalize path deviation, but never cause infeasibility.
+  double w_lateral_slack_lin  = 500.0;
+  double w_lateral_slack_quad = 5000.0;
+
   int osqp_max_iter = 4000;
   double osqp_eps_abs = 1e-6;
   double osqp_eps_rel = 1e-6;

@@ -102,6 +102,9 @@ MPCPathTrackerCpp::MPCPathTrackerCpp()
     this->declare_parameter("max_omega_abs", 2.0);
     this->declare_parameter("max_omega_rate", 20.0);
     this->declare_parameter("max_v_rate", 10.0);
+    this->declare_parameter("lateral_bound", -1.0);
+    this->declare_parameter("w_lateral_slack_lin", 500.0);
+    this->declare_parameter("w_lateral_slack_quad", 5000.0);
     this->declare_parameter("enable_path_fallback", false);
     this->declare_parameter("fallback_min_abs_omega", 0.03);
     this->declare_parameter("fallback_lookahead_index", 20);
@@ -117,6 +120,29 @@ MPCPathTrackerCpp::MPCPathTrackerCpp()
     this->declare_parameter("path_hold_heading_error_gain", 1.4);
     this->declare_parameter("path_hold_cross_track_gain", 1.1);
     this->declare_parameter("path_hold_recovery_blend", 0.75);
+    this->declare_parameter("curve_speed_enable", true);
+    this->declare_parameter("curve_speed_heading_threshold", 0.22);
+    this->declare_parameter("curve_speed_reduction_gain", 0.58);
+    this->declare_parameter("curve_speed_min_ratio", 0.45);
+    this->declare_parameter("overshoot_guard_distance", 0.35);
+    this->declare_parameter("overshoot_reverse_damping", 0.75);
+    this->declare_parameter("oscillation_guard_enable", true);
+    this->declare_parameter("oscillation_guard_cte_deadband", 0.12);
+    this->declare_parameter("oscillation_guard_heading_deadband", 0.24);
+    this->declare_parameter("oscillation_guard_reverse_damping", 0.82);
+    this->declare_parameter("adaptive_corner_mode_enable", true);
+    this->declare_parameter("adaptive_near_cte_thresh", 0.10);
+    this->declare_parameter("adaptive_near_heading_thresh", 0.12);
+    this->declare_parameter("adaptive_near_omega_damping", 0.55);
+    this->declare_parameter("adaptive_near_omega_rate_scale", 0.45);
+    this->declare_parameter("adaptive_near_v_scale", 0.95);
+    this->declare_parameter("off_path_recovery_enable", true);
+    this->declare_parameter("off_path_recovery_distance", 0.90);
+    this->declare_parameter("off_path_recovery_exit_distance", 0.45);
+    this->declare_parameter("off_path_recovery_speed", 0.18);
+    this->declare_parameter("off_path_recovery_heading_gain", 2.4);
+    this->declare_parameter("off_path_recovery_cte_gain", 1.6);
+    this->declare_parameter("off_path_recovery_max_omega", 1.6);
     path_reset_distance_threshold_ =
         std::max(0.1, this->get_parameter("path_reset_distance_threshold").as_double());
     
@@ -241,6 +267,12 @@ void MPCPathTrackerCpp::update_controller_params() {
     if (std::isfinite(wu_new)) cfg.w_u = wu_new;
     const int ref_preview_steps = this->get_parameter("ref_preview_steps").as_int();
     cfg.ref_preview_steps = std::max(0, ref_preview_steps);
+    cfg.lateral_bound =
+        this->get_parameter("lateral_bound").as_double();
+    cfg.w_lateral_slack_lin =
+        std::max(0.0, this->get_parameter("w_lateral_slack_lin").as_double());
+    cfg.w_lateral_slack_quad =
+        std::max(0.0, this->get_parameter("w_lateral_slack_quad").as_double());
 
     max_omega_abs_ = std::max(0.1, this->get_parameter("max_omega_abs").as_double());
     max_omega_rate_ = std::max(0.1, this->get_parameter("max_omega_rate").as_double());
@@ -263,6 +295,50 @@ void MPCPathTrackerCpp::update_controller_params() {
         std::max(0.0, this->get_parameter("path_hold_cross_track_gain").as_double());
     path_hold_recovery_blend_ =
         std::clamp(this->get_parameter("path_hold_recovery_blend").as_double(), 0.0, 1.0);
+    curve_speed_enable_ = this->get_parameter("curve_speed_enable").as_bool();
+    curve_speed_heading_threshold_ =
+        std::max(0.01, this->get_parameter("curve_speed_heading_threshold").as_double());
+    curve_speed_reduction_gain_ =
+        std::max(0.0, this->get_parameter("curve_speed_reduction_gain").as_double());
+    curve_speed_min_ratio_ =
+        std::clamp(this->get_parameter("curve_speed_min_ratio").as_double(), 0.1, 1.0);
+    overshoot_guard_distance_ =
+        std::max(0.05, this->get_parameter("overshoot_guard_distance").as_double());
+    overshoot_reverse_damping_ =
+        std::clamp(this->get_parameter("overshoot_reverse_damping").as_double(), 0.1, 1.0);
+    oscillation_guard_enable_ = this->get_parameter("oscillation_guard_enable").as_bool();
+    oscillation_guard_cte_deadband_ =
+        std::max(0.01, this->get_parameter("oscillation_guard_cte_deadband").as_double());
+    oscillation_guard_heading_deadband_ =
+        std::max(0.01, this->get_parameter("oscillation_guard_heading_deadband").as_double());
+    oscillation_guard_reverse_damping_ =
+        std::clamp(this->get_parameter("oscillation_guard_reverse_damping").as_double(), 0.1, 1.0);
+    adaptive_corner_mode_enable_ =
+        this->get_parameter("adaptive_corner_mode_enable").as_bool();
+    adaptive_near_cte_thresh_ =
+        std::max(0.01, this->get_parameter("adaptive_near_cte_thresh").as_double());
+    adaptive_near_heading_thresh_ =
+        std::max(0.01, this->get_parameter("adaptive_near_heading_thresh").as_double());
+    adaptive_near_omega_damping_ =
+        std::clamp(this->get_parameter("adaptive_near_omega_damping").as_double(), 0.1, 1.0);
+    adaptive_near_omega_rate_scale_ =
+        std::clamp(this->get_parameter("adaptive_near_omega_rate_scale").as_double(), 0.1, 1.0);
+    adaptive_near_v_scale_ =
+        std::clamp(this->get_parameter("adaptive_near_v_scale").as_double(), 0.5, 1.0);
+    off_path_recovery_enable_ = this->get_parameter("off_path_recovery_enable").as_bool();
+    off_path_recovery_distance_ =
+        std::max(0.2, this->get_parameter("off_path_recovery_distance").as_double());
+    off_path_recovery_exit_distance_ =
+        std::clamp(this->get_parameter("off_path_recovery_exit_distance").as_double(), 0.1,
+                   off_path_recovery_distance_ - 0.05);
+    off_path_recovery_speed_ =
+        std::max(0.05, this->get_parameter("off_path_recovery_speed").as_double());
+    off_path_recovery_heading_gain_ =
+        std::max(0.0, this->get_parameter("off_path_recovery_heading_gain").as_double());
+    off_path_recovery_cte_gain_ =
+        std::max(0.0, this->get_parameter("off_path_recovery_cte_gain").as_double());
+    off_path_recovery_max_omega_ =
+        std::max(0.2, this->get_parameter("off_path_recovery_max_omega").as_double());
     effective_horizon_ = std::max(1, cfg.N);
 
     ltv_controller_->setConfig(cfg);
@@ -395,6 +471,11 @@ void MPCPathTrackerCpp::control_loop() {
     // Compute nearest distance from ego to local path for path-hold correction.
     double min_path_dist = std::numeric_limits<double>::max();
     size_t closest_idx = 0;
+    double signed_cte = 0.0;
+    double heading_error_near = 0.0;
+    bool near_metrics_valid = false;
+    double adaptive_rate_scale = 1.0;
+    double adaptive_v_scale = 1.0;
     if (current_pose_ && !local_path_.empty()) {
         const double ex = current_pose_->position.x;
         const double ey = current_pose_->position.y;
@@ -407,11 +488,35 @@ void MPCPathTrackerCpp::control_loop() {
                 closest_idx = i;
             }
         }
+
+        if (closest_idx + 1 < local_path_.size()) {
+            const auto& p0 = local_path_[closest_idx].pose.position;
+            const auto& p1 = local_path_[closest_idx + 1].pose.position;
+            const double path_yaw = std::atan2(p1.y - p0.y, p1.x - p0.x);
+            const double yaw = pose_yaw_from_quat_or_packed(*current_pose_);
+            const double rx = ex - p0.x;
+            const double ry = ey - p0.y;
+            signed_cte = -std::sin(path_yaw) * rx + std::cos(path_yaw) * ry;
+            heading_error_near = wrap_angle(path_yaw - yaw);
+            near_metrics_valid = true;
+        }
+    }
+
+    if (off_path_recovery_enable_ && near_metrics_valid) {
+        if (!off_path_recovery_latched_ && min_path_dist > off_path_recovery_distance_) {
+            off_path_recovery_latched_ = true;
+        } else if (off_path_recovery_latched_ &&
+                   min_path_dist < off_path_recovery_exit_distance_) {
+            off_path_recovery_latched_ = false;
+        }
+    } else {
+        off_path_recovery_latched_ = false;
     }
 
     // Path-guided steering assist: derive yaw-rate from lookahead geometry and blend with MPC.
     const bool enable_path_fallback = this->get_parameter("enable_path_fallback").as_bool();
-    if (enable_path_fallback && current_pose_ && !local_path_.empty()) {
+    if (!off_path_recovery_latched_ &&
+        enable_path_fallback && current_pose_ && !local_path_.empty()) {
         const double min_abs_omega = std::max(0.0, this->get_parameter("fallback_min_abs_omega").as_double());
         const int lookahead_idx_param = this->get_parameter("fallback_lookahead_index").as_int();
         const size_t lookahead_idx = static_cast<size_t>(std::max(1, std::min<int>(lookahead_idx_param, static_cast<int>(local_path_.size()) - 1)));
@@ -442,7 +547,8 @@ void MPCPathTrackerCpp::control_loop() {
     // Always-on path-hold assist:
     // 1) recover cross-track error quickly when outside path corridor
     // 2) align heading to path tangent immediately after re-entry
-    if (current_pose_ && !local_path_.empty() && std::isfinite(min_path_dist)) {
+    if (!off_path_recovery_latched_ &&
+        current_pose_ && !local_path_.empty() && std::isfinite(min_path_dist)) {
         const size_t recovery_lookahead = 3;
         const size_t lookahead =
             (min_path_dist > path_hold_recovery_distance_) ? recovery_lookahead
@@ -490,8 +596,66 @@ void MPCPathTrackerCpp::control_loop() {
             0.0, 1.0);
         const double blend =
             std::clamp(base_blend + path_hold_recovery_blend_ * recovery_scale, 0.0, 0.95);
-        w_cmd = (1.0 - blend) * w_cmd + blend * w_hold;
-        w_cmd = std::clamp(w_cmd, -path_hold_max_omega_, path_hold_max_omega_);
+        const double w_blended = (1.0 - blend) * w_cmd + blend * w_hold;
+        if (blend > 1e-6) {
+            w_cmd = std::clamp(w_blended, -path_hold_max_omega_, path_hold_max_omega_);
+        } else {
+            w_cmd = w_blended;
+        }
+    }
+
+    if (near_metrics_valid && off_path_recovery_latched_) {
+        const double w_recover =
+            off_path_recovery_heading_gain_ * heading_error_near -
+            off_path_recovery_cte_gain_ * signed_cte;
+        w_cmd = std::clamp(w_recover, -off_path_recovery_max_omega_, off_path_recovery_max_omega_);
+        v_cmd = std::min(v_cmd, off_path_recovery_speed_);
+    }
+
+    if (near_metrics_valid && !off_path_recovery_latched_) {
+        if (curve_speed_enable_) {
+            const double h_abs = std::abs(heading_error_near);
+            if (h_abs > curve_speed_heading_threshold_) {
+                const double excess = h_abs - curve_speed_heading_threshold_;
+                const double ratio = std::max(
+                    curve_speed_min_ratio_, 1.0 - curve_speed_reduction_gain_ * excess);
+                v_cmd *= ratio;
+            }
+        }
+
+        if (std::abs(signed_cte) > overshoot_guard_distance_ &&
+            (w_cmd * signed_cte) > 0.0) {
+            w_cmd *= overshoot_reverse_damping_;
+        }
+
+        if (oscillation_guard_enable_ && has_prev_errors_) {
+            const bool cte_flip =
+                (std::abs(signed_cte) > oscillation_guard_cte_deadband_) &&
+                (std::abs(prev_signed_cte_) > oscillation_guard_cte_deadband_) &&
+                ((signed_cte * prev_signed_cte_) < 0.0);
+            const bool heading_flip =
+                (std::abs(heading_error_near) > oscillation_guard_heading_deadband_) &&
+                (std::abs(prev_heading_error_) > oscillation_guard_heading_deadband_) &&
+                ((heading_error_near * prev_heading_error_) < 0.0);
+            if (cte_flip || heading_flip) {
+                w_cmd *= oscillation_guard_reverse_damping_;
+            }
+        }
+
+        if (adaptive_corner_mode_enable_) {
+            const bool near_path =
+                (std::abs(signed_cte) < adaptive_near_cte_thresh_) &&
+                (std::abs(heading_error_near) < adaptive_near_heading_thresh_);
+            if (near_path) {
+                w_cmd *= adaptive_near_omega_damping_;
+                adaptive_rate_scale = adaptive_near_omega_rate_scale_;
+                adaptive_v_scale = adaptive_near_v_scale_;
+            }
+        }
+
+        prev_signed_cte_ = signed_cte;
+        prev_heading_error_ = heading_error_near;
+        has_prev_errors_ = true;
     }
 
     // 제어 출력 제한: 크기 포화 + 레이트 제한(지연/급변 완화)
@@ -507,11 +671,12 @@ void MPCPathTrackerCpp::control_loop() {
     w_cmd = std::clamp(w_cmd, -max_omega_abs_, max_omega_abs_);
     const double recovery_boost =
         (std::isfinite(min_path_dist) && min_path_dist > path_hold_recovery_distance_) ? 1.6 : 1.0;
-    const double max_dw = max_omega_rate_ * recovery_boost * dt;
+    const double max_dw = max_omega_rate_ * recovery_boost * adaptive_rate_scale * dt;
     w_cmd = std::clamp(w_cmd, prev_w_cmd_ - max_dw, prev_w_cmd_ + max_dw);
 
     const double max_dv = max_v_rate_ * (1.0 + 0.4 * (recovery_boost - 1.0)) * dt;
     v_cmd = std::clamp(v_cmd, prev_v_cmd_ - max_dv, prev_v_cmd_ + max_dv);
+    v_cmd *= adaptive_v_scale;
 
     prev_v_cmd_ = v_cmd;
     prev_w_cmd_ = w_cmd;

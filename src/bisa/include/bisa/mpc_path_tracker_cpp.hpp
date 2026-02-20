@@ -73,6 +73,33 @@ private:
     double path_hold_heading_error_gain_ = 1.4;
     double path_hold_cross_track_gain_ = 1.1;
     double path_hold_recovery_blend_ = 0.75;
+    bool curve_speed_enable_ = true;
+    double curve_speed_heading_threshold_ = 0.22;
+    double curve_speed_reduction_gain_ = 0.58;
+    double curve_speed_min_ratio_ = 0.45;
+    double overshoot_guard_distance_ = 0.35;
+    double overshoot_reverse_damping_ = 0.75;
+    bool oscillation_guard_enable_ = true;
+    double oscillation_guard_cte_deadband_ = 0.12;
+    double oscillation_guard_heading_deadband_ = 0.24;
+    double oscillation_guard_reverse_damping_ = 0.82;
+    bool adaptive_corner_mode_enable_ = true;
+    double adaptive_near_cte_thresh_ = 0.10;
+    double adaptive_near_heading_thresh_ = 0.12;
+    double adaptive_near_omega_damping_ = 0.55;
+    double adaptive_near_omega_rate_scale_ = 0.45;
+    double adaptive_near_v_scale_ = 0.95;
+    bool off_path_recovery_enable_ = true;
+    double off_path_recovery_distance_ = 0.90;
+    double off_path_recovery_exit_distance_ = 0.45;
+    double off_path_recovery_speed_ = 0.18;
+    double off_path_recovery_heading_gain_ = 2.4;
+    double off_path_recovery_cte_gain_ = 1.6;
+    double off_path_recovery_max_omega_ = 1.6;
+    bool off_path_recovery_latched_ = false;
+    bool has_prev_errors_ = false;
+    double prev_signed_cte_ = 0.0;
+    double prev_heading_error_ = 0.0;
     
     // CAV ID
     int target_cav_id_;

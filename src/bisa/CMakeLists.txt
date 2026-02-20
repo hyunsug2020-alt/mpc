@@ -145,7 +145,6 @@ install(PROGRAMS
   scripts/dijkstra_planner.py
   scripts/mgeo_class_defs.py
   scripts/hdmap_generator.py
-  scripts/mpc_dashboard.py
   scripts/mpc_parameter_tuner.py
   scripts/analyze_mpc_performance.py
   DESTINATION lib/${PROJECT_NAME}
